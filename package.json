@@ -10,7 +10,8 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/**/*.test.ts",
+    "test": "node --import tsx --test \"tests/**/*.test.ts\"",
+    "test:coverage": "node --import tsx --experimental-test-coverage --test-coverage-include=\"services/**/*.ts\" --test-coverage-include=\"utils/**/*.ts\" --test-reporter=spec --test \"tests/**/*.test.ts\"",
     "check:health": "tsx scripts/check-supabase-health.ts"
   },
   "dependencies": {

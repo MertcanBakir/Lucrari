@@ -23,15 +23,13 @@ Lucrari, bireysel yatırımcılar için geliştirilmiş, BIST ve küresel piyasa
 ## 3. Kurulum ve Çalıştırma
 
 ### Gereksinimler
-- Node.js 18+
-- npm veya yarn
-- Expo CLI
+- Node.js 22 ve npm
 
 ### Adımlar
 
 1. Bağımlılıkları yükleyin:
    ```bash
-   npm install
+   npm ci
    ```
 
 2. Ortam değişkenlerini yapılandırın (`.env`):
@@ -42,7 +40,7 @@ Lucrari, bireysel yatırımcılar için geliştirilmiş, BIST ve küresel piyasa
 
 3. Geliştirme sunucusunu başlatın:
    ```bash
-   npm run dev
+   npm start
    ```
 
 ---
@@ -54,6 +52,9 @@ Projenin tip kontrolü, kodlama standartları ve test süiti aşağıdaki komutl
 ```bash
 # Tüm testleri çalıştır
 npm test
+
+# Servis ve yardımcı fonksiyon testlerinin kapsamını raporla
+npm run test:coverage
 
 # TypeScript tip kontrolü
 npm run typecheck
@@ -67,6 +68,16 @@ npx expo install --check
 # Git diff kontrolü
 git diff --check
 ```
+
+### GitHub Actions CI
+
+CI, `main` dalına yapılan push'larda ve `main` hedefli pull request'lerde çalışır. GitHub'ın Actions sekmesinden elle de başlatılabilir.
+
+- **Kod kalitesi ve testler** bağımlılıkları kilit dosyasından kurar, TypeScript ve lint kontrollerini çalıştırır ve servisler ile yardımcı fonksiyonlar için test kapsamını raporlar. Test ve kapsam raporu 14 gün indirilebilir.
+- **Expo paketleme** SDK bağımlılık uyumluluğunu kontrol eder ve iOS ile Android için JavaScript paketlerini üretir. Bu kontrol yerel uygulama derlemesini, imzalamayı veya dağıtımı içermez. EAS build'leri ihtiyaç olduğunda elle alınır.
+- **Supabase SQL** her çalıştırmada geçici bir veritabanı açar, Lucrari'nin migration'larını uygular ve `supabase/tests/` altındaki SQL testlerini çalıştırır. FinBot ve TradingAgents'ın entegrasyon testleri kendi projelerinde yürütülür.
+
+CI için canlı servis adresi, Expo hesabı veya GitHub Secret tanımlamak gerekmez.
 
 ---
 

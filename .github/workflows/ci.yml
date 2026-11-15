@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CI: 'true'
+  EXPO_NO_DOTENV: '1'
+
+jobs:
+  quality:
+    name: Code quality and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Check TypeScript
+        run: npm run typecheck
+      - name: Run ESLint
+        run: npm run lint
+      - name: Run tests and measure coverage
+        run: npm run test:coverage | tee "$RUNNER_TEMP/test-coverage.txt"
+      - name: Upload test and coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: test-coverage
+          path: ${{ runner.temp }}/test-coverage.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+  bundling:
+    name: Expo bundling (iOS and Android)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Check Expo SDK dependency compatibility
+        run: npx --no-install expo install --check
+      - name: Bundle the app for both mobile platforms
+        env:
+          EXPO_OFFLINE: '1'
+        run: npx --no-install expo export --platform ios --platform android --max-workers 2 --output-dir "$RUNNER_TEMP/expo-export"
+
+  database:
+    name: Supabase migrations and SQL tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SUPABASE_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3
+        with:
+          version: '2.109.1'
+      - name: Start a fresh Supabase database
+        run: supabase db start
+      - name: Run Lucrari SQL tests
+        run: |
+          for test_file in supabase/tests/*.sql; do
+            echo "Running $test_file"
+            docker exec -i supabase_db_finbot psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 < "$test_file"
+          done
