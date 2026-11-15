@@ -8,5 +8,5 @@ jest.mock('expo-haptics', () => ({
   NotificationFeedbackType: { Success: 'Success', Error: 'Error', Warning: 'Warning' },
 }));
 jest.mock('@/context/theme-context', () => ({
-  useAppTheme: () => ({ colorScheme: 'light' }),
+  useAppTheme: jest.fn(() => ({ colorScheme: 'light' })),
 }));

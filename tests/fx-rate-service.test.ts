@@ -15,7 +15,7 @@
  * - Generation-safe cleanup (older promise does not delete a newer promise)
  */
 
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach } from '@jest/globals';
 import assert from 'node:assert/strict';
 import {
   fetchUsdTryRate,
@@ -381,5 +381,36 @@ describe('USD/TRY FX Rate Service & Live Valuation', () => {
     assert.equal(retryRes.isAvailable, true);
     assert.equal(retryRes.rate, 36.0);
     assert.equal(callCount, 2);
+  });
+});
+
+describe('USDTRY fallbacks', () => {
+  const query = jest.fn();
+  const rows = (price: number) => ({ data: { instrument_latest_prices: [{ price }] }, error: null });
+  beforeEach(() => {
+    clearFxRateCache();
+    query.mockReset();
+    const builder = { select: jest.fn().mockReturnThis(), eq: jest.fn().mockReturnThis(), maybeSingle: query };
+    setSupabaseClientForTesting({ from: () => builder });
+  });
+
+  afterEach(resetSupabaseClientForTesting);
+
+  it('uses a cached rate when the record disappears, price is invalid or a request throws', async () => {
+    query.mockResolvedValueOnce(rows(35))
+      .mockResolvedValueOnce({ data: null, error: null })
+      .mockResolvedValueOnce(rows(0))
+      .mockRejectedValueOnce('offline');
+    await expect(fetchUsdTryRate()).resolves.toMatchObject({ rate: 35, rateAt: null, source: 'database' });
+    for (const message of ['USDTRY kaydı bulunamadı', 'Güncel fiyat geçersiz', 'Bağlantı hatası']) {
+      const rate = await fetchUsdTryRate();
+      expect(rate).toMatchObject({ rate: 35, isStale: true, source: 'cache' });
+      expect(rate.staleReason).toContain(message);
+    }
+  });
+
+  it('reports a thrown request without inventing a rate when no earlier price exists', async () => {
+    query.mockRejectedValueOnce(new Error('offline'));
+    await expect(fetchUsdTryRate()).resolves.toMatchObject({ rate: null, source: 'none', isAvailable: false });
   });
 });

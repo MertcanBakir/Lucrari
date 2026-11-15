@@ -31,7 +31,7 @@
  * 27. Duration and date formatters handle edge cases gracefully.
  */
 
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from '@jest/globals';
 import assert from 'node:assert/strict';
 import {
   EXPECTED_JOBS_CATALOG,

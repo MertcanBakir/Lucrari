@@ -47,23 +47,17 @@ jobs:
         run: npm run typecheck
       - name: Run ESLint
         run: npm run lint
-      - name: Run tests and enforce 85% coverage
-        run: npm run test:coverage | tee "$RUNNER_TEMP/test-coverage.txt"
-      - name: Run component tests and enforce 85% line coverage
-        run: npm run test:ui:coverage
-      - name: Run app screen tests and enforce 85% line coverage
-        run: npm run test:app
-      - name: Run hook tests and enforce 85% line coverage
-        run: npm run test:hooks
-      - name: Upload frontend coverage reports
+      - name: Run all tests and enforce per-directory 85% coverage
+        run: npm run test:coverage -- --silent 2>&1 | tee "$RUNNER_TEMP/test-coverage.txt"
+      - name: Upload coverage reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: frontend-test-coverage
           path: |
-            coverage/ui/lcov-report/
-            coverage/app/lcov-report/
-            coverage/hooks/lcov-report/
+            coverage/all/lcov-report/
+            coverage/all/lcov.info
+            coverage/all/coverage-final.json
           if-no-files-found: ignore
           retention-days: 14
       - name: Upload test and coverage report

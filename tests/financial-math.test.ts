@@ -12,7 +12,7 @@
  * - Asset allocation ensuring uninitialized/zero cash does not create false slices
  */
 
-import { describe, it } from 'node:test';
+import { describe, it } from '@jest/globals';
 import assert from 'node:assert/strict';
 import {
   convertUsdToTry,

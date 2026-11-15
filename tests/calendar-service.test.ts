@@ -1,4 +1,4 @@
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach } from '@jest/globals';
 import assert from 'node:assert/strict';
 import {
   formatTradingSession,
@@ -260,4 +260,51 @@ describe('Calendar Service & Event Formatting', () => {
       client.from = originalFrom;
     }
   });
+});
+
+it('groups events on the same day, skips incomplete rows and forwards abort signals', async () => {
+  clearCalendarCache();
+  const controller = new AbortController();
+  const date = '2026-08-10';
+  const rows = {
+    earnings_events: [
+      { id: 'skip', earnings_date: null },
+      { id: 'company', earnings_date: date, fiscal_period: 'Q2', instrument: null, instrument_id: 'fallback-id' },
+      { id: 'other', earnings_date: date, market: 'NASDAQ100', instrument: { id: 'apple', symbol: 'AAPL' } },
+    ],
+    economic_events: [
+      { id: 'skip', scheduled_at: null },
+      { id: 'euro', scheduled_at: `${date}T12:00:00Z`, country: 'DE', name: 'CPI', reference_period: null },
+      { id: 'usa', scheduled_at: `${date}T13:00:00Z`, country: 'US', name: 'Jobs', reference_period: 'Q2' },
+    ],
+  };
+  const client = getSupabaseClient();
+  const abortSignal = jest.fn();
+  const from = jest.spyOn(client, 'from').mockImplementation((table) => {
+    const builder = {
+      select: jest.fn().mockReturnThis(), gte: jest.fn().mockReturnThis(), lte: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(), order: jest.fn().mockReturnThis(),
+      abortSignal: (signal: AbortSignal) => {
+        abortSignal(signal);
+        return Promise.resolve({ data: rows[table as keyof typeof rows], error: null });
+      },
+    };
+    return builder as unknown as ReturnType<typeof client.from>;
+  });
+  try {
+    const result = await fetchMonthlyCalendarEvents(2026, 7, { signal: controller.signal });
+    expect(abortSignal.mock.calls).toEqual([[controller.signal], [controller.signal]]);
+    expect(result.dayIndicators[date]).toEqual({ count: 4, hasEarnings: true, hasEconomic: true });
+    expect(result.eventsByDate[date]).toEqual([
+      expect.objectContaining({ title: 'BIST/NASDAQ', instrumentId: 'fallback-id', period: 'Q2' }),
+      expect.objectContaining({ title: 'AAPL', instrumentId: 'apple' }),
+      expect.objectContaining({ title: 'CPI', subtitle: 'DE Göstergesi' }),
+      expect.objectContaining({ title: 'Jobs', country: 'US' }),
+    ]);
+    expect(await fetchMonthlyCalendarEvents(2026, 7)).toBe(result);
+    expect(from).toHaveBeenCalledTimes(2);
+  } finally {
+    from.mockRestore();
+    clearCalendarCache();
+  }
 });

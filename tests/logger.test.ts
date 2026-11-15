@@ -1,4 +1,4 @@
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach } from '@jest/globals';
 import assert from 'node:assert/strict';
 import { logger, createScopedLogger } from '../utils/logger';
 

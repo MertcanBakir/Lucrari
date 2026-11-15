@@ -47,7 +47,7 @@
  *    - 10 distinct states evaluated with real auth and data states
  */
 
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from '@jest/globals';
 import assert from 'node:assert/strict';
 import {
   normalizeWatchlistRpcItem,

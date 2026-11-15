@@ -23,7 +23,7 @@
  * 15. All database RPC error codes are accurately translated to user-friendly Turkish messages.
  */
 
-import { describe, it } from 'node:test';
+import { describe, it } from '@jest/globals';
 import assert from 'node:assert/strict';
 import { generateUUID } from '../utils/uuid';
 import {

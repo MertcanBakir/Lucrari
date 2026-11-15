@@ -20,11 +20,12 @@
  * - In-flight query deduplication & generation-safe cleanup
  */
 
-import { describe, it } from 'node:test';
+import { describe, it } from '@jest/globals';
 import assert from 'node:assert/strict';
 import { generateUUID } from '../utils/uuid';
 import { createResetIntent } from '../utils/mutation-intent';
 import {
+  archiveAllUserPortfolios,
   ensureDefaultPortfolio,
   fetchPortfolioPositions,
   fetchPortfolioCashState,
@@ -961,4 +962,86 @@ describe('Portfolio Service & RPC Integration (Mock Unit Tests)', () => {
     notifyPortfolioChanged();
     assert.strictEqual(notified, false);
   });
+});
+
+it('maps nullable cash balances and never substitutes a numeric zero', async () => {
+  const client = getSupabaseClient();
+  const rpc = jest.spyOn(client, 'rpc');
+  try {
+    rpc.mockImplementationOnce(() => Promise.resolve({
+      data: { portfolio_id: null, balances: [
+        { currency: 'TRY', opening_balance: '500.5', current_balance: null, initialized_at: null },
+        { currency: 'USD', opening_balance: null, current_balance: '0', initialized_at: null },
+      ] },
+      error: null,
+    }) as unknown as ReturnType<typeof client.rpc>);
+    rpc.mockImplementationOnce(() => Promise.resolve({ data: null, error: null }) as unknown as ReturnType<typeof client.rpc>);
+    await expect(fetchPortfolioCashState('portfolio')).resolves.toEqual({
+      portfolioId: 'portfolio', isInitialized: false, balances: [
+        { currency: 'TRY', openingBalance: 500.5, currentBalance: null, initializedAt: null },
+        { currency: 'USD', openingBalance: null, currentBalance: 0, initializedAt: null },
+      ],
+    });
+    await expect(fetchPortfolioCashState('portfolio')).resolves.toEqual({ portfolioId: 'portfolio', isInitialized: false, balances: [] });
+  } finally {
+    rpc.mockRestore();
+  }
+});
+
+it('distinguishes empty positions from RPC failures and keeps archival scoped to active user portfolios', async () => {
+  const client = getSupabaseClient();
+  const rpc = jest.spyOn(client, 'rpc');
+  const from = jest.spyOn(client, 'from');
+  try {
+    rpc.mockImplementationOnce(() => Promise.resolve({ data: null, error: null }) as unknown as ReturnType<typeof client.rpc>);
+    rpc.mockImplementationOnce(() => { throw new Error('offline'); });
+    rpc.mockImplementationOnce(() => { throw new Error('offline'); });
+    await expect(fetchPortfolioPositions('portfolio')).resolves.toEqual([]);
+    await expect(fetchPortfolioPositions('portfolio')).rejects.toThrow(/Pozisyonlar yüklenemedi/);
+    await expect(fetchPortfolioCashState('portfolio')).rejects.toThrow(/Nakit durumu yüklenemedi/);
+    const update = jest.fn().mockReturnThis();
+    const eq = jest.fn().mockReturnThis();
+    const is = jest.fn().mockResolvedValueOnce({ error: null }).mockRejectedValueOnce(new Error('offline'));
+    from.mockReturnValue({ update, eq, is } as unknown as ReturnType<typeof client.from>);
+    const listener = jest.fn();
+    const unsubscribe = subscribePortfolioChanges(listener);
+    try {
+      await archiveAllUserPortfolios('user-a');
+      await archiveAllUserPortfolios('user-a');
+      expect(from).toHaveBeenCalledWith('portfolios');
+      expect(update).toHaveBeenCalledWith({ archived_at: expect.any(String) });
+      expect(eq).toHaveBeenCalledWith('user_id', 'user-a');
+      expect(is).toHaveBeenCalledWith('archived_at', null);
+      expect(listener).toHaveBeenCalledTimes(1);
+    } finally {
+      unsubscribe();
+    }
+  } finally {
+    rpc.mockRestore();
+    from.mockRestore();
+  }
+});
+
+it('surfaces database errors for cash lookup and initialization without publishing a change', async () => {
+  const client = getSupabaseClient();
+  const rpc = jest.spyOn(client, 'rpc');
+  const listener = jest.fn();
+  const unsubscribe = subscribePortfolioChanges(listener);
+  try {
+    rpc.mockImplementationOnce(() => Promise.resolve({ data: null, error: { message: 'offline' } }) as unknown as ReturnType<typeof client.rpc>);
+    rpc.mockImplementationOnce(() => Promise.resolve({ data: null, error: { message: 'offline' } }) as unknown as ReturnType<typeof client.rpc>);
+    const params = { portfolioId: 'portfolio', tryOpeningBalance: 1.25, usdOpeningBalance: 2.50 };
+    await expect(fetchPortfolioCashState(params.portfolioId)).rejects.toThrow(/Nakit durumu yüklenemedi/);
+    await expect(initializePortfolioCashAccounts(params)).rejects.toThrow(/Nakit hesabı başlatılamadı/);
+    expect(rpc).toHaveBeenLastCalledWith('initialize_portfolio_cash_accounts', {
+      p_portfolio_id: 'portfolio', p_try_opening_balance: 1.25, p_usd_opening_balance: 2.50,
+      p_client_request_id: expect.stringMatching(/^[a-f0-9-]{36}$/i),
+    });
+    expect(listener).not.toHaveBeenCalled();
+    rpc.mockImplementationOnce(() => { throw new Error('offline'); });
+    await expect(initializePortfolioCashAccounts(params)).rejects.toThrow(/Nakit hesabı başlatılamadı/);
+  } finally {
+    rpc.mockRestore();
+    unsubscribe();
+  }
 });

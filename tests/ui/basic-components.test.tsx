@@ -1,5 +1,6 @@
+import { useAppTheme } from '@/context/theme-context';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { Text } from 'react-native';
+import { Platform, Text } from 'react-native';
 import { Collapsible } from '@/components/ui/collapsible';
 import { MarketFilterChips } from '@/components/portfolio/market-filter-chips';
 import { PortfolioHeader } from '@/components/portfolio/portfolio-header';
@@ -46,4 +47,25 @@ it('offers a retry on stale data and an add action for an empty watchlist', asyn
   await waitFor(() => expect(add).toHaveBeenCalledTimes(1));
   view.rerender(<StaleDataBanner onRefresh={refresh} isRefreshing />);
   expect(screen.queryByText('Yenile')).toBeNull();
+});
+
+it('supports dark-mode controls on web and offers the empty-watchlist action', async () => {
+  jest.replaceProperty(Platform, 'OS', 'web');
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'dark' } as ReturnType<typeof useAppTheme>);
+  const add = jest.fn();
+  const select = jest.fn();
+  render(<><Collapsible title="Ayrıntılar"><Text>İçerik</Text></Collapsible>
+    <MarketFilterChips activeMarket="CRYPTO" onSelectMarket={select} />
+    <WatchlistEmptyCard onOpenAddModal={add} /></>);
+  fireEvent.press(screen.getByText('Ayrıntılar'));
+  expect(screen.getByText('İçerik')).toBeOnTheScreen();
+  fireEvent.press(screen.getByText('Tümü'));
+  await waitFor(() => expect(select).toHaveBeenCalledWith('ALL'));
+  fireEvent.press(screen.getByLabelText('İzleme Listesi Oluştur'));
+  expect(add).toHaveBeenCalledTimes(1);
+});
+
+afterEach(() => {
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'light' } as ReturnType<typeof useAppTheme>);
+  jest.restoreAllMocks();
 });

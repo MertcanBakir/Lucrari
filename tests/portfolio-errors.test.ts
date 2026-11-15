@@ -6,7 +6,7 @@
  * `PortfolioOperationError` class and end-to-end transport retryability pipeline.
  */
 
-import { describe, it } from 'node:test';
+import { describe, it } from '@jest/globals';
 import assert from 'node:assert/strict';
 import {
   formatPortfolioRpcError,

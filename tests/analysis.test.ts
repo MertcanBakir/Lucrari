@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { afterEach, beforeEach, describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it } from '@jest/globals';
 
 import {
   checkAnalysisHealth,
@@ -234,7 +234,7 @@ describe('FinBot Analysis frontend contract', () => {
     for (const [fetchReply, code] of [
       [async () => new Response('not JSON'), 'ANALYSIS_INVALID_JSON'],
       [async () => new Response('{}'), 'ANALYSIS_CONTRACT_ERROR'],
-      [async () => { throw new DOMException('disconnected', 'AbortError'); }, 'ANALYSIS_TIMEOUT'],
+      [async () => { throw Object.assign(new Error('disconnected'), { name: 'AbortError' }); }, 'ANALYSIS_TIMEOUT'],
       [async () => { throw new TypeError('socket failed'); }, 'ANALYSIS_NETWORK_ERROR'],
     ] as const) {
       globalThis.fetch = fetchReply;

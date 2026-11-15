@@ -1,5 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
+import * as Application from 'expo-application';
+import Constants from 'expo-constants';
+import * as Haptics from 'expo-haptics';
 import * as SplashScreen from 'expo-splash-screen';
 import RootLayout from '@/app/_layout';
 import TabLayout from '@/app/(tabs)/_layout';
@@ -24,7 +27,7 @@ jest.mock('expo-router', () => {
   });
   const Tabs = Object.assign(({ children }: React.PropsWithChildren) => children, {
     Screen: ({ options }: { options: { tabBarLabel: string; tabBarIcon: (props: { color: string; focused: boolean }) => React.ReactNode } }) =>
-      <><Text>{options.tabBarLabel}</Text>{options.tabBarIcon({ color: 'black', focused: false })}</>,
+      <><Text>{options.tabBarLabel}</Text>{options.tabBarIcon({ color: 'black', focused: false })}{options.tabBarIcon({ color: 'black', focused: true })}</>,
   });
   return { Stack, Tabs, Link: ({ children, href }: React.PropsWithChildren<{ href: string }>) =>
     <Text accessibilityRole="link" accessibilityLabel={href}>{children}</Text> };
@@ -32,6 +35,9 @@ jest.mock('expo-router', () => {
 jest.mock('@/components/health/analysis-health-menu-item', () => ({ AnalysisHealthMenuItem: () => null }));
 jest.mock('@/components/health/supabase-health-menu-item', () => ({ SupabaseHealthMenuItem: () => null }));
 jest.mock('@/components/system-health/system-health-menu-item', () => ({ SystemHealthMenuItem: () => null }));
+
+jest.mock('expo-application', () => ({ __esModule: true, nativeApplicationVersion: null, nativeBuildVersion: null }));
+jest.mock('expo-constants', () => ({ expoConfig: { version: 'test-version' } }));
 
 const auth = jest.mocked(useAuth);
 const theme = jest.mocked(useAppTheme);
@@ -96,4 +102,60 @@ it('reuses the same request ID after a failed reset with unknown server outcome'
   await act(async () => retry?.onPress?.());
   expect(resetAccount).toHaveBeenCalledTimes(2);
   expect(resetAccount.mock.calls[0]).toEqual(resetAccount.mock.calls[1]);
+});
+
+it('shows the unauthenticated and starting states and falls back when app metadata is unavailable', () => {
+  auth.mockReturnValue({ isAuthReady: false, isAuthenticated: false, user: null, resetAccount } as unknown as ReturnType<typeof useAuth>);
+  const view = render(<MenuScreen />);
+  expect(screen.getByText('Başlatılıyor...')).toBeOnTheScreen();
+  expect(screen.getByText(/test-version/)).toBeOnTheScreen();
+  auth.mockReturnValue({ isAuthReady: true, isAuthenticated: false, user: null, resetAccount } as unknown as ReturnType<typeof useAuth>);
+  jest.replaceProperty(Constants, 'expoConfig', null);
+  view.rerender(<MenuScreen />);
+  expect(screen.getByText('Bağlantı Yok')).toBeOnTheScreen();
+  expect(screen.getByText(/Sürüm —/)).toBeOnTheScreen();
+  jest.replaceProperty(Application, 'nativeApplicationVersion', '2.0.0');
+  jest.replaceProperty(Application, 'nativeBuildVersion', '123');
+  view.rerender(<MenuScreen />);
+  expect(screen.getByText(/2.0.0 \(123\)/)).toBeOnTheScreen();
+});
+
+it('switches the theme and handles a failed reset on web without haptics', async () => {
+  jest.replaceProperty(Platform, 'OS', 'web');
+  jest.mocked(Haptics.selectionAsync).mockClear();
+  jest.mocked(useAppTheme).mockReturnValue({
+    themeMode: 'dark', colorScheme: 'dark', setThemeMode, toggleTheme: jest.fn(),
+  } as ReturnType<typeof useAppTheme>);
+  render(<MenuScreen />);
+  expect(screen.getByLabelText(/Koyu temasını seç/)).toHaveProp('accessibilityState', { selected: true });
+  fireEvent.press(screen.getByLabelText(/Açık temasını seç/));
+  expect(setThemeMode).toHaveBeenCalledWith('light');
+  expect(Haptics.selectionAsync).not.toHaveBeenCalled();
+
+  let rejectReset!: (reason: string) => void;
+  resetAccount.mockImplementationOnce(() => new Promise((_, reject) => { rejectReset = reject; }));
+  fireEvent.press(screen.getByText('Sıfırla'));
+  const confirm = jest.mocked(Alert.alert).mock.lastCall?.[2]?.find((button) => button.style === 'destructive');
+  act(() => confirm?.onPress?.());
+  expect(screen.queryByText('Sıfırla')).toBeNull();
+  await act(async () => rejectReset('domain failure'));
+  expect(Alert.alert).toHaveBeenLastCalledWith('İşlem Başarısız', 'Hesap sıfırlama işlemi başarısız oldu.', [{ text: 'Tamam' }]);
+  expect(screen.getByText('Sıfırla')).toBeOnTheScreen();
+});
+
+it('finishes a confirmed reset on web', async () => {
+  jest.replaceProperty(Platform, 'OS', 'web');
+  resetAccount.mockResolvedValue(undefined);
+  render(<MenuScreen />);
+  fireEvent.press(screen.getByText('Sıfırla'));
+  const confirm = jest.mocked(Alert.alert).mock.lastCall?.[2]?.find((button) => button.style === 'destructive');
+  await act(async () => confirm?.onPress?.());
+  expect(Alert.alert).toHaveBeenLastCalledWith('Yatırımlar Sıfırlandı', expect.any(String));
+});
+
+it('registers the dark theme tab bar on Android', () => {
+  jest.replaceProperty(Platform, 'OS', 'android');
+  theme.mockReturnValue({ colorScheme: 'dark' } as ReturnType<typeof useAppTheme>);
+  render(<TabLayout />);
+  expect(screen.getByText('Yatırımlarım')).toBeOnTheScreen();
 });

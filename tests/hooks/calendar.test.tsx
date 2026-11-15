@@ -123,3 +123,45 @@ it('reports load failures and requests authentication before a signed-out retry'
   expect(retryAuth).toHaveBeenCalledTimes(2);
   expect(hook.result.current.membership.watchedCount).toBe(0);
 });
+
+it('shows cached calendar membership and keeps refresh errors scoped to the active account', async () => {
+  owned.getOwnershipCacheSnapshot.mockReturnValue({ ...makeOwnership('account-a'), timestamp: Date.now() });
+  watched.getWatchlistMembershipSnapshot.mockReturnValue({ ...makeMembership('account-a'), timestamp: Date.now() });
+  owned.fetchOwnedPositions.mockResolvedValueOnce(makeOwnership('account-a')).mockRejectedValueOnce('offline');
+  watched.fetchAllWatchedInstrumentIds.mockResolvedValueOnce(makeMembership('account-a')).mockRejectedValueOnce(new Error('offline'));
+  const hook = renderHook(() => ({ ownership: usePortfolioCalendarOwnership(), membership: useWatchlistMembership() }));
+  expect(hook.result.current.ownership.ownedPositions.has(assetId)).toBe(true);
+  expect(hook.result.current.membership.watchedInstrumentIds.has(assetId)).toBe(true);
+  await waitFor(() => expect(watched.fetchAllWatchedInstrumentIds).toHaveBeenCalledWith(false));
+  expect(owned.fetchOwnedPositions).toHaveBeenCalledWith({ forceRefresh: false });
+  await act(async () => {
+    await Promise.all([hook.result.current.ownership.refetch(), hook.result.current.membership.refetch()]);
+  });
+  expect(hook.result.current.ownership.error?.message).toBe('Açık pozisyonlar yüklenemedi');
+  expect(hook.result.current.membership.error?.message).toBe('offline');
+});
+
+it('ignores account data notifications when no corresponding membership snapshot exists', async () => {
+  owned.fetchOwnedPositions.mockResolvedValueOnce(makeOwnership('account-a'));
+  watched.fetchAllWatchedInstrumentIds.mockResolvedValueOnce(makeMembership('account-a'));
+  const hook = renderHook(() => useWatchlistMembership());
+  await waitFor(() => expect(hook.result.current.watchedCount).toBe(1));
+  const publish = watched.subscribeWatchlistChanges.mock.calls[0][0];
+  act(() => publish({ userId: 'account-a' } as Parameters<typeof publish>[0]));
+  expect(hook.result.current.watchedCount).toBe(1);
+  hook.unmount();
+  act(() => publish({ userId: 'account-a' } as Parameters<typeof publish>[0]));
+  expect(hook.result.current.watchedCount).toBe(1);
+});
+
+it('keeps a new month active when a superseded request fails and normalizes non-Error failures', async () => {
+  const august = { year: 2026, month: 7, eventsByDate: {}, dayIndicators: {} };
+  const older = deferred<typeof august>();
+  loadCalendar.mockReturnValueOnce(older.promise).mockResolvedValueOnce(august).mockRejectedValueOnce('offline');
+  const hook = renderHook(({ month }: { month: number }) => useMonthlyCalendar(2026, month), { initialProps: { month: 6 } });
+  hook.rerender({ month: 7 });
+  await act(async () => older.reject(new Error('obsolete')));
+  expect(hook.result.current.error).toBeNull();
+  await act(() => hook.result.current.refetch());
+  expect(hook.result.current.error).toBe('Takvim verileri yüklenemedi');
+});

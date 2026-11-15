@@ -1,100 +1,127 @@
-/**
- * Anonymous Authentication Service & Lifecycle Tests
- * 
- * Validates:
- * - Session reuse without duplicate sign-ins.
- * - Single anonymous sign-in invocation when no session is present.
- * - Concurrency lock & in-flight request deduplication.
- * - Safe error handling & sanitization of sensitive tokens and keys.
- */
-
-import { describe, it, beforeEach } from 'node:test';
-import assert from 'node:assert/strict';
 import {
-  sanitizeAuthError,
+  authenticateRegisteredAccount,
   ensureAnonymousSession,
+  getCurrentSession,
+  getCurrentUser,
+  onAuthStateChange,
+  resetAccountSession,
   resetAuthLock,
-} from '../services/auth/auth-service';
-import { resetSupabaseClient } from '../services/supabase/client';
+  sanitizeAuthError,
+} from '@/services/auth/auth-service';
+import { getSupabaseClient } from '@/services/supabase/client';
+import { deferred } from './helpers/deferred';
 
-describe('Anonymous Auth Service & Security', () => {
-  beforeEach(() => {
-    resetAuthLock();
-    resetSupabaseClient();
-  });
+jest.mock('@/services/supabase/client', () => ({ getSupabaseClient: jest.fn() }));
 
-  describe('Error Message Sanitization', () => {
-    it('should strip JWT tokens from error messages', () => {
-      const errorWithJwt = 'Authentication failed with token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c on server';
-      const sanitized = sanitizeAuthError(errorWithJwt);
+const user = { id: 'user-a', is_anonymous: true };
+const session = { user };
+const registeredUser = { id: 'user-b', is_anonymous: false };
+const auth = {
+  getSession: jest.fn(), getUser: jest.fn(), signInAnonymously: jest.fn(),
+  signInWithPassword: jest.fn(), signUp: jest.fn(), signOut: jest.fn(), onAuthStateChange: jest.fn(),
+};
 
-      assert.ok(!sanitized.includes('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9'));
-      assert.ok(sanitized.includes('[FILTERED_TOKEN]'));
-    });
+beforeEach(() => {
+  jest.resetAllMocks();
+  resetAuthLock();
+  jest.mocked(getSupabaseClient).mockReturnValue({ auth } as unknown as ReturnType<typeof getSupabaseClient>);
+  auth.getSession.mockResolvedValue({ data: { session }, error: null });
+  auth.getUser.mockResolvedValue({ data: { user }, error: null });
+  auth.signInAnonymously.mockResolvedValue({ data: { user, session }, error: null });
+});
 
-    it('should strip Supabase secret keys and URL parameters', () => {
-      const rawError = 'Failed to connect: apikey=sbp_secret_key_123456789&secret=super_secret_val';
-      const sanitized = sanitizeAuthError(rawError);
+it('deduplicates session bootstrap calls and reuses the stored identity', async () => {
+  const pending = deferred<{ data: { session: typeof session }; error: null }>();
+  auth.getSession.mockReturnValueOnce(pending.promise);
+  const requests = [ensureAnonymousSession(), ensureAnonymousSession()];
+  expect(auth.getSession).toHaveBeenCalledTimes(1);
+  pending.resolve({ data: { session }, error: null });
+  const results = await Promise.all(requests);
+  expect(results[0]).toMatchObject({ user, session, isNewUser: false, error: null });
+  expect(results[1]).toBe(results[0]);
+  expect(auth.signInAnonymously).not.toHaveBeenCalled();
+  await ensureAnonymousSession();
+  expect(auth.getSession).toHaveBeenCalledTimes(2);
+});
 
-      assert.ok(!sanitized.includes('sbp_secret_key_123456789'));
-      assert.ok(!sanitized.includes('super_secret_val'));
-      assert.ok(sanitized.includes('apikey=[FILTERED]'));
-      assert.ok(sanitized.includes('secret=[FILTERED]'));
-    });
+it('creates an anonymous session when the stored session is unavailable', async () => {
+  auth.getSession.mockResolvedValue({ data: { session: null }, error: { message: 'expired' } });
+  await expect(ensureAnonymousSession()).resolves.toMatchObject({ user, session, isNewUser: true, error: null });
+  expect(auth.signInAnonymously).toHaveBeenCalledTimes(1);
+});
 
-    it('should safely handle Error objects, null, and undefined', () => {
-      assert.equal(sanitizeAuthError(null), 'Bilinmeyen kimlik doğrulama hatası');
-      assert.equal(sanitizeAuthError(undefined), 'Bilinmeyen kimlik doğrulama hatası');
-      
-      const customError = new Error('Network timeout during auth request');
-      assert.equal(sanitizeAuthError(customError), 'Network timeout during auth request');
-    });
-  });
+it('returns safe errors for malformed, rejected and throwing anonymous sign-ins', async () => {
+  auth.getSession.mockResolvedValue({ data: null, error: null });
+  auth.signInAnonymously
+    .mockResolvedValueOnce({ data: { session: null, user: null }, error: null })
+    .mockResolvedValueOnce({ data: { session, user: null }, error: null })
+    .mockResolvedValueOnce({ data: null, error: { error_description: 'apikey=abc' } })
+    .mockRejectedValueOnce(new Error('offline'));
+  await expect(ensureAnonymousSession()).resolves.toMatchObject({ isNewUser: false, user: null, error: expect.stringContaining('bilgisi eksik') });
+  await expect(ensureAnonymousSession()).resolves.toMatchObject({ session: null, user: null });
+  await expect(ensureAnonymousSession()).resolves.toMatchObject({ error: 'apikey=[FILTERED]' });
+  await expect(ensureAnonymousSession()).resolves.toMatchObject({ error: 'offline' });
+});
 
-  describe('Concurrency Lock & Deduplication', () => {
-    it('should deduplicate multiple simultaneous bootstrap calls into a single in-flight promise', async () => {
-      resetAuthLock();
+it('signs in registered accounts, trims the email and handles email confirmation', async () => {
+  auth.signInWithPassword.mockResolvedValueOnce({ data: { session: { user: registeredUser } }, error: null });
+  await expect(authenticateRegisteredAccount('sign-in', ' a@example.test ', 'pw')).resolves.toBe('signed-in');
+  expect(auth.signInWithPassword).toHaveBeenCalledWith({ email: 'a@example.test', password: 'pw' });
+  auth.signUp.mockResolvedValueOnce({ data: { user: registeredUser, session: null }, error: null });
+  await expect(authenticateRegisteredAccount('sign-up', 'a@example.test', 'pw')).resolves.toBe('confirm-email');
+  auth.signInWithPassword.mockResolvedValueOnce({ data: {}, error: { code: 'email_not_confirmed' } });
+  await expect(authenticateRegisteredAccount('sign-in', 'a@example.test', 'pw')).resolves.toBe('confirm-email');
+});
 
-      // Dispatch 5 concurrent calls
-      const p1 = ensureAnonymousSession();
-      const p2 = ensureAnonymousSession();
-      const p3 = ensureAnonymousSession();
-      const p4 = ensureAnonymousSession();
-      const p5 = ensureAnonymousSession();
+it('rejects anonymous sign-ins and hides upstream details on failure', async () => {
+  auth.signInWithPassword.mockResolvedValueOnce({ data: { session }, error: null });
+  await expect(authenticateRegisteredAccount('sign-in', 'a@example.test', 'pw')).rejects.toThrow('Oturum açılamadı');
+  auth.signUp.mockRejectedValueOnce(new Error('private credential details'));
+  await expect(authenticateRegisteredAccount('sign-up', 'a@example.test', 'pw')).rejects.toThrow('Kayıt tamamlanamadı');
+});
 
-      // All promises should resolve to identical result structures
-      const [r1, r2, r3, r4, r5] = await Promise.all([p1, p2, p3, p4, p5]);
+it('reads the active session and user and returns null when either lookup fails', async () => {
+  await expect(getCurrentSession()).resolves.toBe(session);
+  await expect(getCurrentUser()).resolves.toBe(user);
+  auth.getSession.mockRejectedValueOnce(new Error('unavailable'));
+  auth.getUser.mockRejectedValueOnce(new Error('unavailable'));
+  await expect(getCurrentSession()).resolves.toBeNull();
+  await expect(getCurrentUser()).resolves.toBeNull();
+});
 
-      assert.deepEqual(r1, r2);
-      assert.deepEqual(r2, r3);
-      assert.deepEqual(r3, r4);
-      assert.deepEqual(r4, r5);
-    });
+it('forwards auth transitions and unsubscribes even when registration fails', () => {
+  const listener = jest.fn();
+  const unsubscribe = jest.fn();
+  auth.onAuthStateChange.mockReturnValueOnce({ data: { subscription: { unsubscribe } } });
+  const subscription = onAuthStateChange(listener);
+  auth.onAuthStateChange.mock.calls[0][0]('SIGNED_IN', session);
+  auth.onAuthStateChange.mock.calls[0][0]('SIGNED_OUT', null);
+  expect(listener.mock.calls).toEqual([['SIGNED_IN', session], ['SIGNED_OUT', null]]);
+  subscription.unsubscribe();
+  expect(unsubscribe).toHaveBeenCalledTimes(1);
+  auth.onAuthStateChange.mockImplementationOnce(() => { throw new Error('offline'); });
+  expect(() => onAuthStateChange(listener).unsubscribe()).not.toThrow();
+});
 
-    it('should safely release lock after completion to allow subsequent retries', async () => {
-      resetAuthLock();
+it('asks for a fresh session even if sign-out throws during reset', async () => {
+  auth.signOut.mockRejectedValueOnce(new Error('offline'));
+  await expect(resetAccountSession()).resolves.toMatchObject({ isNewUser: true, user });
+  expect(auth.signOut).toHaveBeenCalledTimes(1);
+  expect(auth.getSession).not.toHaveBeenCalled();
+  expect(auth.signInAnonymously).toHaveBeenCalledTimes(1);
+});
 
-      const firstResult = await ensureAnonymousSession();
-      assert.ok(firstResult !== undefined);
-
-      // Now lock should be released (null)
-      const secondResult = await ensureAnonymousSession();
-      assert.ok(secondResult !== undefined);
-    });
-  });
-
-  describe('Session Bootstrap Behavior', () => {
-    it('should handle unconfigured or network errors gracefully without crashing', async () => {
-      resetAuthLock();
-
-      const result = await ensureAnonymousSession();
-      assert.ok(typeof result.isNewUser === 'boolean');
-      // In mock/test env without real Supabase backend, it returns a controlled error or session
-      if (result.error) {
-        assert.equal(typeof result.error, 'string');
-        assert.equal(result.session, null);
-        assert.equal(result.user, null);
-      }
-    });
-  });
+it('redacts tokens and credentials from strings and structured errors', () => {
+  const raw = 'eyJheaderlongenough.payloadlongenough.signaturelongenough apikey=sbp_123&secret=value';
+  expect(sanitizeAuthError(raw)).toBe('[FILTERED_TOKEN] apikey=[FILTERED]&secret=[FILTERED]');
+  expect(sanitizeAuthError(new Error('offline'))).toBe('offline');
+  expect(sanitizeAuthError({ message: 'expired' })).toBe('expired');
+  expect(sanitizeAuthError({ error_description: 'denied' })).toBe('denied');
+  expect(sanitizeAuthError({ fallback: true })).toBe('{"fallback":true}');
+  const circular: { self?: unknown } = {};
+  circular.self = circular;
+  expect(sanitizeAuthError(circular)).toBe('[object Object]');
+  expect(sanitizeAuthError(23)).toBe('23');
+  expect(sanitizeAuthError(new Error())).toBe('Kimlik doğrulama hatası oluştu.');
+  expect(sanitizeAuthError(null)).toBe('Bilinmeyen kimlik doğrulama hatası');
 });

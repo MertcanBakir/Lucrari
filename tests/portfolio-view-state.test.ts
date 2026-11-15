@@ -8,7 +8,7 @@
  * 4. Background refresh error on fully empty portfolio -> displays stale data, does NOT show full error screen
  */
 
-import { describe, it } from 'node:test';
+import { describe, it } from '@jest/globals';
 import assert from 'node:assert/strict';
 import { resolvePortfolioViewState } from '../utils/portfolio-view-state';
 
