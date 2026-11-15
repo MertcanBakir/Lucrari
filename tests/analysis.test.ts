@@ -10,6 +10,10 @@ import {
   fetchAnalysisHistory,
   fetchAnalysisProviders,
   fetchAnalysisReport,
+  fetchAnalysisStatus,
+  getAnalysisApiBaseUrl,
+  getAnalysisFailureMessage,
+  isAnalysisApiError,
   isModelNotAllowedError,
   startAnalysis,
 } from '../services/analysis/analysis-service';
@@ -24,6 +28,10 @@ import {
   isFutureAnalysisDate,
   findActiveAnalysisToTrack,
   formatAnalysisPartTitle,
+  formatAnalysisStage,
+  formatAnalysisStatus,
+  formatAnalysisDate,
+  isAnalysisTerminal,
   normalizeAnalysisHistory,
   normalizeAnalysisRecord,
   normalizeAnalysisReport,
@@ -93,6 +101,147 @@ describe('FinBot Analysis frontend contract', () => {
     resetSupabaseClientForTesting();
     if (ORIGINAL_API_URL === undefined) delete process.env.EXPO_PUBLIC_ANALYSIS_API_URL;
     else process.env.EXPO_PUBLIC_ANALYSIS_API_URL = ORIGINAL_API_URL;
+  });
+
+  it('rejects malformed job fields before tracking a job', () => {
+    const invalidFields = {
+      status: [3, 'unknown'],
+      stage: [3, 'unknown'],
+      created_at: ['2026-10-22'],
+      started_at: [5],
+      finished_at: ['invalid'],
+      error_code: [{ code: 'failed' }],
+      ticker: [null, '$$'],
+      analysis_date: ['2026-02-29'],
+    };
+    for (const [field, values] of Object.entries(invalidFields)) {
+      for (const value of values) {
+        assert.equal(normalizeAnalysisRecord(validRecord({ [field]: value })), null, field);
+      }
+    }
+  });
+
+  it('rejects ambiguous history pages and supports the older analyses array', () => {
+    const item = validRecord();
+    assert.equal(normalizeAnalysisHistory(false, 2, 0), null);
+    assert.equal(normalizeAnalysisHistory({ items: 'invalid' }, 2, 0), null);
+    assert.equal(normalizeAnalysisHistory([item, item], 1, 0), null);
+    assert.equal(normalizeAnalysisHistory([item, item], 2, 0), null);
+    assert.equal(normalizeAnalysisHistory([null], 2, 0), null);
+    assert.equal(normalizeAnalysisHistory({ analyses: [item], total: 1 }, 2, 1), null);
+    assert.equal(normalizeAnalysisHistory({ analyses: [item], total: 3 }, 2, 1)?.hasMore, true);
+    assert.equal(normalizeAnalysisHistory({ items: [item], total: -1 }, 1, 0)?.totalCount, null);
+    assert.equal(normalizeAnalysisHistory({ items: [item], total: 1.5 }, 2, 0)?.hasMore, false);
+  });
+
+  it('fails closed on ambiguous or unusable model catalog entries', () => {
+    const provider = {
+      provider: 'openai',
+      models: ['model-a'],
+      auth_type: 'api_key',
+      model_options: [{ id: 'model-a', name: 'Model A' }],
+    };
+    const invalid = [
+      null,
+      { ...provider, provider: 1 },
+      { ...provider, provider: ' ' },
+      { ...provider, models: null },
+      { ...provider, models: [1] },
+      { ...provider, models: [' '] },
+      { ...provider, models: ['a', ' a '] },
+      { ...provider, model_options: null },
+      { ...provider, model_options: [false] },
+      { ...provider, model_options: [{ id: 1, name: 'A' }] },
+      { ...provider, model_options: [{ id: ' ', name: 'A' }] },
+      { ...provider, model_options: [{ id: 'a', name: 1 }] },
+      { ...provider, model_options: [{ id: 'a', name: ' ' }] },
+      { ...provider, model_options: [{ id: 'a', name: 'A' }, { id: ' a ', name: 'B' }] },
+      { ...provider, models: [], model_options: [] },
+      { ...provider, auth_type: 'unknown' },
+    ];
+    for (const entry of invalid) {
+      assert.equal(normalizeProviders({ providers: [entry], unavailable: {} }), null, JSON.stringify(entry));
+    }
+    assert.equal(normalizeProviders({ providers: [], unavailable: [] }), null);
+    assert.equal(normalizeProviders({ providers: [], unavailable: { openai: false } }), null);
+  });
+
+  it('shows localized labels and preserves the calendar date of an analysis', () => {
+    const record = normalizeAnalysisRecord(validRecord());
+    assert.ok(record);
+    assert.equal(isAnalysisTerminal(record), false);
+    assert.equal(isAnalysisTerminal({ ...record, status: 'timed_out' }), true);
+    assert.equal(formatAnalysisStatus('partial'), 'Kısmi');
+    assert.equal(formatAnalysisStage('persisting'), 'Rapor hazırlanıyor');
+    assert.equal(formatAnalysisDate('2026-02-30'), '—');
+    assert.equal(formatAnalysisDate('2026-10-22', 'en-US'), 'October 22, 2026');
+    assert.equal(getAnalysisFailureMessage(null), null);
+    assert.equal(getAnalysisFailureMessage('UNKNOWN_FAILURE'), null);
+    assert.match(getAnalysisFailureMessage('REPORT_NOT_READY') ?? '', /henüz hazır değil/);
+  });
+
+  it('classifies rejected status requests without surfacing raw response bodies', async () => {
+    mockSupabaseSession();
+    for (const [status, code, retryable] of [
+      [403, 'ANALYSIS_ACCESS_DENIED', false],
+      [404, 'ANALYSIS_NOT_FOUND', false],
+      [409, 'ANALYSIS_CONFLICT', true],
+      [422, 'ANALYSIS_VALIDATION_FAILED', false],
+      [500, 'ANALYSIS_SERVER_ERROR', true],
+      [400, 'ANALYSIS_SERVER_ERROR', false],
+      [401, 'ANALYSIS_AUTH_REQUIRED', true],
+    ] as const) {
+      globalThis.fetch = async () => new Response('private upstream details', { status });
+      await assert.rejects(fetchAnalysisStatus(ANALYSIS_ID), (error: unknown) =>
+        isAnalysisApiError(error) && error.code === code && error.status === status &&
+        error.isRetryable === retryable && !error.message.includes('private upstream details')
+      );
+    }
+  });
+
+  it('requires an HTTPS API URL without credentials, query parameters, or fragments', () => {
+    delete process.env.EXPO_PUBLIC_ANALYSIS_API_URL;
+    assert.throws(getAnalysisApiBaseUrl, { code: 'ANALYSIS_API_NOT_CONFIGURED' });
+    for (const url of [
+      'not a URL', 'http://analysis.example.com', 'https://user@analysis.example.com',
+      'https://:password@analysis.example.com', 'https://analysis.example.com?token=example',
+      'https://analysis.example.com#internal',
+    ]) {
+      process.env.EXPO_PUBLIC_ANALYSIS_API_URL = url;
+      assert.throws(getAnalysisApiBaseUrl, { code: 'ANALYSIS_API_INVALID_URL' });
+    }
+    process.env.EXPO_PUBLIC_ANALYSIS_API_URL = ' https://analysis.example.com/api/ ';
+    assert.equal(getAnalysisApiBaseUrl(), 'https://analysis.example.com/api');
+  });
+
+  it('retries a throttled status read once and caps the reported follow-up delay', async () => {
+    mockSupabaseSession();
+    let requests = 0;
+    globalThis.fetch = async () => {
+      requests += 1;
+      const retryAfter = requests === 1 ? 'Wed, 21 Oct 2015 07:28:00 GMT' : '3600';
+      return new Response('{}', { status: 429, headers: { 'Retry-After': retryAfter } });
+    };
+    await assert.rejects(fetchAnalysisStatus(ANALYSIS_ID), (error: unknown) =>
+      isAnalysisApiError(error) && error.code === 'ANALYSIS_RATE_LIMITED' &&
+      error.isRetryable && error.retryAfterMs === 10_000
+    );
+    assert.equal(requests, 2);
+  });
+
+  it('distinguishes malformed payloads, aborts, and network failures', async () => {
+    mockSupabaseSession();
+    for (const [fetchReply, code] of [
+      [async () => new Response('not JSON'), 'ANALYSIS_INVALID_JSON'],
+      [async () => new Response('{}'), 'ANALYSIS_CONTRACT_ERROR'],
+      [async () => { throw new DOMException('disconnected', 'AbortError'); }, 'ANALYSIS_TIMEOUT'],
+      [async () => { throw new TypeError('socket failed'); }, 'ANALYSIS_NETWORK_ERROR'],
+    ] as const) {
+      globalThis.fetch = fetchReply;
+      await assert.rejects(fetchAnalysisStatus(ANALYSIS_ID), (error: unknown) =>
+        isAnalysisApiError(error) && error.code === code
+      );
+    }
   });
 
   it('normalizes active and successful records while rejecting contradictory terminal state', () => {
@@ -254,6 +403,32 @@ describe('FinBot Analysis frontend contract', () => {
       },
       upstream_version: '0.7.0',
     };
+    const section = raw.sections[1];
+    for (const invalidSection of [
+      null, { ...section, code: 2 }, { ...section, code: ' ' }, { ...section, title: 2 },
+      { ...section, title: ' ' }, { ...section, content_markdown: false }, { ...section, parts: [] },
+      { ...section, content_markdown: ' ' },
+    ]) {
+      assert.equal(normalizeAnalysisReport({ ...raw, sections: [invalidSection] }), null);
+    }
+    const config = raw.effective_config;
+    for (const invalidConfig of [
+      null, { ...config, quick: { provider: ' ', model: 'model' } },
+      { ...config, deep: { provider: 'openai', model: ' ' } },
+      { ...config, research_rounds: -1 }, { ...config, research_rounds: 1.5 },
+      { ...config, risk_rounds: -1 }, { ...config, risk_rounds: '1' },
+      { ...config, analysts: null }, { ...config, analysts: ['unknown'] },
+      { ...config, language: 'unknown' },
+    ]) {
+      assert.equal(normalizeAnalysisReport({ ...raw, effective_config: invalidConfig }), null);
+    }
+    for (const version of [null, ' ']) {
+      assert.equal(normalizeAnalysisReport({ ...raw, upstream_version: version }), null);
+    }
+    const withInvalidParts = normalizeAnalysisReport({
+      ...raw, sections: [{ ...section, parts: { ' ': 'ignored', unknown: false, empty: ' ', ' summary ': 'Text' } }],
+    });
+    assert.deepEqual(withInvalidParts?.sections[0].parts, { summary: 'Text' });
     const report = normalizeAnalysisReport(raw);
     assert.ok(report);
     assert.equal(report.analysisHorizon, 'long_12m');

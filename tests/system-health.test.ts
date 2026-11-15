@@ -36,9 +36,11 @@ import assert from 'node:assert/strict';
 import {
   EXPECTED_JOBS_CATALOG,
   normalizeSystemHealthResponse,
+  normalizeJobHealthItem,
   evaluateOverallHealth,
   groupJobsIntoSections,
   formatJobExecutionStatus,
+  formatJobMessageCode,
   formatDurationSeconds,
   formatSystemHealthDateTime,
 } from '../utils/system-health-formatters';
@@ -84,6 +86,76 @@ describe('System and Data Health Comprehensive Test Suite', () => {
     clearSystemHealthCache();
     resetAuthLock();
     resetSupabaseClientForTesting();
+  });
+
+  it('normalizes invalid, missing and numeric-string durations without changing job health', () => {
+    const raw = sampleValidRpcData[0];
+    for (const duration of [null, undefined, {}, ' ', 'bad', '-1', -1, Infinity]) {
+      const item = normalizeJobHealthItem({ ...raw, duration_seconds: duration });
+      assert.equal(item?.durationSeconds, null);
+      assert.equal(item?.healthStatus, 'healthy');
+    }
+    assert.equal(normalizeJobHealthItem({ ...raw, duration_seconds: ' 0 ' })?.durationSeconds, 0);
+    assert.equal(normalizeJobHealthItem({ ...raw, duration_seconds: ' 42.5 ' })?.durationSeconds, 42.5);
+    for (const invalid of [null, false, {}, { job_code: 42 }, { job_code: 'UNKNOWN' }]) {
+      assert.equal(normalizeJobHealthItem(invalid), null);
+    }
+    const normalized = normalizeSystemHealthResponse([
+      null, false, {}, { job_code: 42 }, ...sampleValidRpcData,
+    ]);
+    assert.equal(normalized.isIncomplete, false);
+    assert.equal(normalized.items.length, sampleValidRpcData.length);
+  });
+
+  it('prefers a valid fresh result over older or undated duplicates', () => {
+    const raw = sampleValidRpcData[0];
+    const invalid = { ...raw, checked_at: ' ' };
+    const older = { ...raw, checked_at: '2026-08-28T10:05:00Z', health_status: 'critical' };
+    const normalized = normalizeSystemHealthResponse([
+      invalid, ...sampleValidRpcData, older, invalid,
+    ]);
+    assert.equal(normalized.isIncomplete, false);
+    const result = normalized.items.find((item) => item.jobCode === raw.job_code);
+    assert.equal(result?.healthStatus, 'healthy');
+    assert.equal(result?.checkedAt, raw.checked_at);
+  });
+
+  it('distinguishes overall failure, overdue, running, and empty dashboard messages', () => {
+    const [first, second] = normalizeSystemHealthResponse(sampleValidRpcData).items;
+    const failure = { ...first, executionStatus: 'failed', healthStatus: 'critical' } as const;
+    const overdue = { ...second, messageCode: 'JOB_OVERDUE', healthStatus: 'warning' } as const;
+    const combined = evaluateOverallHealth([failure, overdue]);
+    assert.equal(combined.status, 'critical');
+    assert.deepEqual([combined.failedCount, combined.overdueCount], [1, 1]);
+    assert.equal(combined.subtitle, '1 işlem başarısız, 1 veri kaynağı gecikmiş');
+    assert.equal(evaluateOverallHealth([failure]).subtitle, '1 işlem başarısız');
+    assert.equal(evaluateOverallHealth([overdue]).subtitle, '1 veri kaynağı gecikmiş');
+    const running = evaluateOverallHealth([{ ...first, executionStatus: 'running' }]);
+    assert.equal(running.status, 'running');
+    assert.equal(running.runningCount, 1);
+    assert.equal(evaluateOverallHealth([], first.checkedAt).status, 'unknown');
+    assert.match(evaluateOverallHealth([], first.checkedAt).subtitle, /^Son kontrol:/);
+    assert.equal(evaluateOverallHealth([]).subtitle, 'Henüz durum verisi bulunmuyor.');
+    assert.equal(evaluateOverallHealth([first]).subtitle, 'Tüm veri akışları sağlıklı');
+  });
+
+  it('describes backend job outcomes and renders whole-minute durations', () => {
+    const labels = {
+      JOB_OK: 'Veriler güncel.',
+      JOB_PARTIAL: 'İşlem tamamlandı ancak bazı veriler güncellenemedi.',
+      JOB_FAILED: 'Son güncelleme tamamlanamadı.',
+      JOB_OVERDUE: 'Beklenen güncelleme gecikmiş görünüyor.',
+      JOB_RUNNING: 'Güncelleme şu anda devam ediyor.',
+      JOB_SKIPPED: 'Bu çalışma planlı olarak atlandı.',
+      JOB_NEVER_RUN: 'İlk çalışma sonucu henüz oluşmadı.',
+      JOB_STATUS_UNAVAILABLE: 'Bu servis için durum bilgisi doğrulanamadı.',
+    } as const;
+    for (const code of Object.keys(labels) as (keyof typeof labels)[]) {
+      assert.equal(formatJobMessageCode(code), labels[code]);
+    }
+    assert.equal(formatDurationSeconds(120), '2 dk');
+    assert.equal(formatDurationSeconds(undefined), '—');
+    assert.equal(formatDurationSeconds(Infinity), '—');
   });
 
   describe('Service Architecture, Security & Deduplication', () => {

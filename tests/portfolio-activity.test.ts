@@ -54,12 +54,19 @@ import {
 import {
   fetchPortfolioActivityPage,
   normalizePortfolioActivityRow,
+  normalizePortfolioActivityPage,
   clearPortfolioActivityCache,
   formatPortfolioActivityRpcError,
   bumpPortfolioActivityRevision,
 } from '../services/portfolio/portfolio-activity-service';
 import {
   formatActivityUnitPrice,
+  formatActivityDateHeader,
+  formatActivityDateTime,
+  formatActivityGrossAmount,
+  formatActivityQuantity,
+  formatActivityTime,
+  getLocalDateKey,
   getActivityTypeMeta,
 } from '../utils/portfolio-activity-formatters';
 import {
@@ -103,6 +110,162 @@ describe('Portfolio Activity Comprehensive Hardening Suite', () => {
   afterEach(() => {
     clearPortfolioActivityCache();
     resetSupabaseClientForTesting();
+  });
+
+  describe('Activity contract and presentation boundaries', () => {
+    const date = '2026-08-31T10:00:00Z';
+    const cashRow = {
+      activity_id: validActivityId1,
+      portfolio_id: defaultPortfolioId,
+      source_kind: 'CASH_FLOW',
+      activity_type: 'WITHDRAWAL',
+      currency: 'TRY',
+      gross_amount: 50,
+      occurred_at: date,
+      created_at: date,
+      is_reversed: false,
+      has_more: false,
+    };
+    const tradeRow = {
+      ...cashRow,
+      source_kind: 'TRANSACTION',
+      activity_type: 'SELL',
+      instrument_id: validInstrumentId1,
+      symbol: 'THYAO',
+      company_name: 'Turkish Airlines',
+      market: 'BIST100',
+      quantity: 1,
+      unit_price: 50,
+    };
+
+    it('rejects malformed common fields and invalid trade amounts', () => {
+      assert.throws(() => normalizePortfolioActivityRow(null), /kaydı formatı/);
+      const malformed = [
+        [{ activity_id: null }, /activity_id/],
+        [{ portfolio_id: false }, /portfolio_id/],
+        [{ source_kind: 'UNKNOWN' }, /source_kind/],
+        [{ activity_type: 'TRANSFER' }, /activity_type/],
+        [{ activity_type: 'SELL' }, /kaynak türü uyuşmazlığı/],
+        [{ created_at: 'invalid' }, /created_at/],
+        [{ gross_amount: NaN }, /gross_amount/],
+        [{ gross_amount: 0 }, /gross_amount/],
+        [{ currency: null }, /currency/],
+        [{ currency: 'EUR' }, /currency/],
+        [{ reversal_reason: 'wrong state' }, /alma nedeni bulunamaz/],
+        [{ notes: false }, /not alanı/],
+      ] as const;
+      for (const [fields, expected] of malformed) {
+        assert.throws(() => normalizePortfolioActivityRow({ ...cashRow, ...fields }), expected);
+      }
+      for (const value of [NaN, Infinity, -1, 0]) {
+        assert.throws(() => normalizePortfolioActivityRow({ ...tradeRow, quantity: value }), /quantity/);
+        assert.throws(() => normalizePortfolioActivityRow({ ...tradeRow, unit_price: value }), /unit_price/);
+      }
+      for (const fields of [
+        { symbol: null }, { symbol: ' ' }, { company_name: null }, { company_name: ' ' }, { market: false },
+      ]) {
+        assert.throws(() => normalizePortfolioActivityRow({ ...tradeRow, ...fields }), /zorunludur/);
+      }
+    });
+
+    it('keeps cash flows separate from trades even when transaction fields are falsy', () => {
+      for (const fields of [
+        { instrument_id: '' }, { symbol: '' }, { company_name: '' }, { market: '' }, { quantity: 0 }, { unit_price: 0 },
+      ]) {
+        assert.throws(() => normalizePortfolioActivityRow({ ...cashRow, ...fields }), /enstrüman alanları/);
+      }
+      const normalized = normalizePortfolioActivityRow({
+        ...cashRow, is_reversed: true, reversed_at: date, notes: ' ', reversal_reason: ' corrected ',
+      });
+      assert.equal(normalized.notes, null);
+      assert.equal(normalized.reversalReason, 'corrected');
+      assert.equal(normalized.reversedAt, date);
+      assert.equal(normalized.instrumentId, null);
+      assert.equal(normalizePortfolioActivityRow({
+        ...cashRow, is_reversed: true, reversed_at: date, reversal_reason: ' ',
+      }).reversalReason, null);
+      assert.throws(() => normalizePortfolioActivityRow({
+        ...cashRow, is_reversed: true, reversed_at: date, reversal_reason: false,
+      }), /Geçersiz geri alma nedeni/);
+    });
+
+    it('discards oversized, malformed, or inconsistent pages', () => {
+      assert.throws(() => normalizePortfolioActivityPage([cashRow, tradeRow], defaultPortfolioId, 1), /limiti|limit/);
+      assert.throws(() => normalizePortfolioActivityPage([null], defaultPortfolioId), /satır yapısı/);
+      assert.throws(() => normalizePortfolioActivityPage([{ ...cashRow, has_more: 0 }], defaultPortfolioId), /has_more/);
+      assert.throws(() => normalizePortfolioActivityPage([
+        cashRow, { ...tradeRow, has_more: true },
+      ], defaultPortfolioId), /tutarsız has_more/);
+      assert.throws(() => normalizePortfolioActivityPage([cashRow], validInstrumentId1), /kimliği uyuşmazlığı/);
+      assert.throws(() => normalizePortfolioActivityPage([cashRow, cashRow], defaultPortfolioId), /mükerrer/);
+    });
+
+    it('preserves local dates and amounts without displaying invalid data as zero', () => {
+      const local = new Date(2026, 7, 31, 9, 15);
+      const nextDay = new Date(2026, 8, 1, 9, 15);
+      assert.equal(getLocalDateKey(local), '2026-08-31');
+      assert.equal(getLocalDateKey('invalid'), '1970-01-01');
+      assert.equal(formatActivityDateHeader('invalid', nextDay), '—');
+      assert.equal(formatActivityDateHeader(local, nextDay), 'Dün');
+      assert.equal(formatActivityDateHeader(local, local), 'Bugün');
+      assert.equal(formatActivityTime(local), '09:15');
+      assert.equal(formatActivityTime('invalid'), '—');
+      assert.match(formatActivityDateTime(local.toISOString()), /31 Ağustos 2026, 09:15/);
+      assert.equal(formatActivityDateTime('invalid'), '—');
+      for (const amount of [undefined, null, NaN, Infinity]) {
+        assert.equal(formatActivityQuantity(amount), '—');
+        assert.equal(formatActivityGrossAmount(amount, 'USD'), '—');
+        assert.equal(formatActivityUnitPrice(amount, 'USD'), '—');
+      }
+      assert.equal(formatActivityGrossAmount(0, 'TRY'), '—');
+      assert.equal(formatActivityQuantity(0), '0 Adet');
+      assert.equal(formatActivityQuantity(0.00001234), '0,00001234 Adet');
+      assert.match(formatActivityGrossAmount(12.5, 'TRY'), /12,50/);
+      assert.match(formatActivityUnitPrice(12, 'TRY'), /12,00/);
+      assert.equal(getActivityTypeMeta('WITHDRAWAL').sign, '-');
+    });
+
+    it('scopes query metadata and portfolio resolution to the current user', () => {
+      const key = buildActivityQueryKey(defaultUserId, defaultPortfolioId, 'ALL', '');
+      for (const [active, loaded] of [['', key], [key, null]] as const) {
+        assert.equal(resolveQueryScopedActivityState(active, loaded, { items: [], hasMore: true }).hasMore, false);
+      }
+      const scoped = resolveQueryScopedActivityState(key, key, { items: [] });
+      assert.equal(scoped.isQueryMatch, true);
+      assert.equal(scoped.nextCursor, null);
+      assert.equal(scoped.initialError, null);
+      assert.equal(scoped.loadMoreError, null);
+      assert.equal(resolveQueryScopedActivityState(key, key, []).hasMore, false);
+
+      const portfolio = { userId: defaultUserId, portfolioId: defaultPortfolioId, portfolioName: 'My portfolio' };
+      assert.equal(resolveUserScopedPortfolioState(defaultUserId, portfolio).status, 'success');
+      assert.equal(resolveUserScopedPortfolioState(defaultUserId, { ...portfolio, error: 'Unavailable' }).status, 'error');
+      assert.equal(resolveUserScopedPortfolioState(defaultUserId, { ...portfolio, portfolioId: null }).status, 'loading');
+      for (const activeUserId of [null, ' ']) {
+        const signedOut = resolveUserScopedPortfolioState(activeUserId, portfolio);
+        assert.equal(signedOut.status, 'idle');
+        assert.equal(signedOut.portfolioId, null);
+      }
+      assert.equal(resolveUserScopedPortfolioState('other-user', portfolio, false).status, 'idle');
+      assert.equal(resolveUserScopedActivityState(defaultUserId, null, []).isUserMatch, false);
+      assert.equal(resolveUserScopedActivityState(null, defaultUserId, []).isUserMatch, false);
+    });
+
+    it('blocks pagination independently for each unresolved loading or ownership condition', () => {
+      const ready = {
+        isLoadingMore: false, isLoadingInitial: false, isRefreshing: false,
+        hasMore: true, hasCursor: true, hasPortfolio: true, hasUser: true, isQueryMatch: true,
+      };
+      assert.equal(canTriggerLoadMore(ready), true);
+      for (const key of Object.keys(ready) as (keyof typeof ready)[]) {
+        assert.equal(canTriggerLoadMore({ ...ready, [key]: !ready[key] }), false, key);
+      }
+      assert.equal(buildActivityQueryKey(null, undefined, 'ALL', ''), 'anon:none:ALL:');
+      assert.equal(buildPortfolioSubscriptionScopeKey(undefined, null), 'anon:none');
+      assert.equal(shouldAcceptPortfolioChangeNotification('', ''), false);
+      assert.equal(shouldAcceptPortfolioChangeNotification('user:portfolio', ''), false);
+      assert.equal(shouldAcceptPortfolioChangeNotification('user:none', 'user:none'), false);
+    });
   });
 
   describe('1. Strict Fail-Closed Normalization & Data Integrity', () => {

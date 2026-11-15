@@ -89,6 +89,8 @@ import {
 } from '../utils/watchlist-view-state';
 import {
   isWatchlistPageOutOfRangeError,
+  WatchlistOperationError,
+  WATCHLIST_PAGE_OUT_OF_RANGE,
   formatWatchlistRpcError,
 } from '../utils/watchlist-errors';
 import {
@@ -1368,6 +1370,95 @@ describe('Watchlist Comprehensive Test Suite', () => {
       assert.strictEqual(scopedPageB.items.length, 0);
       assert.strictEqual(scopedPageB.totalCount, 0);
       assert.strictEqual(scopedPageB.isLoading, true);
+    });
+  });
+
+  describe('Watchlist display and session boundaries', () => {
+    const state = {
+      stateUserId: 'previous-user',
+      committedPageIndex: 0,
+      requestedPageIndex: 0,
+      failedPageIndex: null,
+      pageResult: null,
+      isLoading: false,
+      isPageLoading: false,
+      isStale: false,
+      error: null,
+      hasLoadedSuccessfully: false,
+    };
+    const options = {
+      rawState: state,
+      currentUserId: 'current-user',
+      isAuthReady: true,
+      authError: null,
+      isExpanded: false,
+      snapshot: null,
+    };
+
+    it('uses only the active account snapshot and derives its committed page', () => {
+      const snapshot = {
+        userId: options.currentUserId, items: [], totalCount: 47,
+        limit: 20, offset: 40, timestamp: 1, isStale: true,
+      };
+      const loaded = resolveUserScopedWatchlistState({ ...options, snapshot, isExpanded: true });
+      assert.equal(loaded.committedPageIndex, 2);
+      assert.equal(loaded.isStale, true);
+      assert.equal(loaded.totalCount, 47);
+      assert.equal(loaded.hasLoadedSuccessfully, true);
+      assert.equal(resolveUserScopedWatchlistState({ ...options, snapshot }).hasLoadedSuccessfully, true);
+
+      const ownState = { ...state, stateUserId: options.currentUserId };
+      assert.equal(resolveUserScopedWatchlistState({ ...options, rawState: ownState }).totalCount, 0);
+      const ownPage = { ...ownState, pageResult: snapshot, committedPageIndex: 2 };
+      assert.equal(resolveUserScopedWatchlistState({ ...options, rawState: ownPage, isExpanded: true }).totalCount, 47);
+      assert.equal(resolveUserScopedWatchlistState({ ...options, rawState: ownPage }).committedPageIndex, 2);
+    });
+
+    it('clears private watchlist and membership state when session is unavailable', () => {
+      assert.equal(resolveUserScopedWatchlistState({ ...options, isAuthReady: false }).isLoading, true);
+      const signedOut = { ...options, currentUserId: null };
+      assert.match(resolveUserScopedWatchlistState(signedOut).error?.message ?? '', /oturumu doğrulanamadı/);
+      assert.equal(resolveUserScopedWatchlistState({ ...signedOut, authError: 'Session expired' }).error?.message, 'Session expired');
+      const rawMembership = {
+        stateUserId: state.stateUserId, membershipSet: new Set(['private-asset']),
+        isLoading: true, isStale: true, error: 'Unavailable',
+      };
+      const membership = { rawMembership, currentUserId: options.currentUserId, isAuthReady: true, snapshot: null };
+      assert.equal(resolveUserScopedMembershipState({ ...membership, currentUserId: null }).watchedInstrumentIds.size, 0);
+      assert.equal(resolveUserScopedMembershipState({ ...membership, isAuthReady: false }).watchedInstrumentIds.size, 0);
+      assert.equal(resolveUserScopedMembershipState({ ...membership, currentUserId: state.stateUserId }).membershipError, 'Unavailable');
+      const snapshot = { userId: options.currentUserId, instrumentIds: new Set(['current-asset']), isStale: false, timestamp: 1 };
+      assert.deepEqual(resolveUserScopedMembershipState({ ...membership, snapshot }).watchedInstrumentIds, snapshot.instrumentIds);
+    });
+
+    it('distinguishes empty, partial, and retained stale pages', () => {
+      assert.equal(formatPaginationRangeText(0, 20, 0, 0), '0 / 0');
+      assert.equal(formatPaginationRangeText(2, 20, 47, 0), '0 / 0');
+      assert.equal(formatPaginationRangeText(2, 20, 47, 10), '41–47 / 47');
+      const base = {
+        isAuthReady: true, userId: options.currentUserId, authError: null,
+        isLoading: false, isPageLoading: false, error: null, hasLoadedSuccessfully: true,
+        totalCount: 47, itemsCount: 0, isStale: true, pendingInstrumentIdsCount: 0,
+      };
+      assert.equal(resolveWatchlistViewState({ ...base, totalCount: 0 }).showEmptyCard, true);
+      assert.equal(resolveWatchlistViewState(base).showContentList, false);
+      assert.equal(resolveWatchlistViewState({ ...base, itemsCount: 7, error: 'network' }).state, 'stale_data');
+      assert.match(resolveWatchlistViewState({ ...base, userId: null }).errorMessage ?? '', /oturum açılması/);
+    });
+
+    it('recognizes pagination errors across service boundaries and hides unknown backend details', () => {
+      assert.equal(isWatchlistPageOutOfRangeError(new WatchlistOperationError('Pagination', {
+        code: WATCHLIST_PAGE_OUT_OF_RANGE,
+      })), true);
+      assert.equal(isWatchlistPageOutOfRangeError({ code: WATCHLIST_PAGE_OUT_OF_RANGE }), true);
+      assert.equal(isWatchlistPageOutOfRangeError({ code: 'other' }), false);
+      assert.equal(isWatchlistPageOutOfRangeError(null), false);
+      const fallback = 'İzleme listesi işlemi gerçekleştirilemedi. Lütfen tekrar deneyiniz.';
+      assert.equal(formatWatchlistRpcError(undefined), fallback);
+      assert.equal(formatWatchlistRpcError({ details: 'private data' }), fallback);
+      for (const message of ['network failure', 'fetch failed', 'timeout', 'offline', 'request aborted']) {
+        assert.match(formatWatchlistRpcError(new Error(message)), /Ağ bağlantısı/);
+      }
     });
   });
 

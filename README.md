@@ -53,7 +53,7 @@ Projenin tip kontrolü, kodlama standartları ve test süiti aşağıdaki komutl
 # Tüm testleri çalıştır
 npm test
 
-# Servis ve yardımcı fonksiyon testlerinin kapsamını raporla
+# Satır, koşul dalı ve fonksiyon kapsamını ölç ve %85 eşiğini kontrol et
 npm run test:coverage
 
 # TypeScript tip kontrolü
@@ -73,7 +73,7 @@ git diff --check
 
 CI, `main` dalına yapılan push'larda ve `main` hedefli pull request'lerde çalışır. GitHub'ın Actions sekmesinden elle de başlatılabilir.
 
-- **Kod kalitesi ve testler** bağımlılıkları kilit dosyasından kurar, TypeScript ve lint kontrollerini çalıştırır ve servisler ile yardımcı fonksiyonlar için test kapsamını raporlar. Test ve kapsam raporu 14 gün indirilebilir.
+- **Kod kalitesi ve testler** bağımlılıkları kilit dosyasından kurar, TypeScript ve lint kontrollerini çalıştırır ve testlerde yüklenen `services/` ve `utils/` modüllerinin toplam kapsamını ölçer. Satır, koşul dalı ve fonksiyon kapsamının her biri en az %85 olmalıdır. `Code quality and tests` kontrolü `main` dalına birleştirme için zorunludur. Test ve kapsam raporu 14 gün indirilebilir.
 - **Expo paketleme** SDK bağımlılık uyumluluğunu kontrol eder ve iOS ile Android için JavaScript paketlerini üretir. Bu kontrol yerel uygulama derlemesini, imzalamayı veya dağıtımı içermez. EAS build'leri ihtiyaç olduğunda elle alınır.
 - **Supabase SQL** her çalıştırmada geçici bir veritabanı açar, Lucrari'nin migration'larını uygular ve `supabase/tests/` altındaki SQL testlerini çalıştırır. FinBot ve TradingAgents'ın entegrasyon testleri kendi projelerinde yürütülür.
 

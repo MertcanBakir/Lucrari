@@ -40,7 +40,7 @@ jobs:
         run: npm run typecheck
       - name: Run ESLint
         run: npm run lint
-      - name: Run tests and measure coverage
+      - name: Run tests and enforce 85% coverage
         run: npm run test:coverage | tee "$RUNNER_TEMP/test-coverage.txt"
       - name: Upload test and coverage report
         if: ${{ !cancelled() }}
