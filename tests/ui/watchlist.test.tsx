@@ -1,4 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { useAppTheme } from '@/context/theme-context';
+import { deferred } from '../helpers/deferred';
+import { FlatList, Platform } from 'react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { HomeWatchlistSection } from '@/components/watchlist/home-watchlist-section';
 import { WatchlistRow } from '@/components/watchlist/watchlist-row';
 import { WatchlistSearchModal } from '@/components/watchlist/watchlist-search-modal';
@@ -156,4 +159,51 @@ it('applies the selected search market and shows an empty result', async () => {
   fireEvent.press(screen.getByLabelText('Kripto kategorisi'));
   expect(await screen.findByText('Sonuç Bulunamadı')).toBeOnTheScreen();
   expect(search).toHaveBeenLastCalledWith('', 'CRYPTO', 20, 0);
+});
+
+it('shows stale, inactive, neutral and decreasing prices without implying unavailable data is zero', () => {
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'dark' } as ReturnType<typeof useAppTheme>);
+  const remove = jest.fn();
+  const view = render(<WatchlistRow item={{ ...watched, isActive: false, priceIsStale: true, changePercent: -2 }} onRemove={remove} />);
+  expect(screen.getByText('Artık aktif olarak fiyatlanmıyor')).toBeOnTheScreen();
+  expect(screen.getByText('Fiyat güncel olmayabilir')).toBeOnTheScreen();
+  view.rerender(<WatchlistRow item={{ ...watched, changePercent: null, changeAmount: 0 }} onRemove={remove} />);
+  expect(screen.getByText('—')).toBeOnTheScreen();
+  view.rerender(<WatchlistRow item={{ ...watched, changePercent: -2 }} onRemove={remove} />);
+  expect(screen.getByText(/-%2/)).toBeOnTheScreen();
+});
+
+it('paginates watchlist search, deduplicates load-more and displays unavailable prices', async () => {
+  jest.replaceProperty(Platform, 'OS', 'web');
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'dark' } as ReturnType<typeof useAppTheme>);
+  type SearchResult = Awaited<ReturnType<typeof searchInstrumentsDetailed>>;
+  const first = deferred<SearchResult>();
+  const next = deferred<SearchResult>();
+  search.mockReturnValueOnce(first.promise).mockReturnValueOnce(next.promise);
+  const load = jest.fn().mockResolvedValue(membership);
+  const toggle = jest.fn().mockResolvedValue({ success: true });
+  const props = { visible: true, onClose: jest.fn(), onToggleWatchlist: toggle, onLoadMembership: load,
+    watchedInstrumentIds: new Set([assetId]) };
+  const view = render(<WatchlistSearchModal {...props} />);
+  expect(await screen.findByText('Varlıklar aranıyor...')).toBeOnTheScreen();
+  await act(async () => first.resolve({ items: [result], error: null, isStale: false, hasMore: true }));
+  const list = view.UNSAFE_getByType(FlatList);
+  fireEvent(list, 'endReached', { distanceFromEnd: 0 });
+  fireEvent(list, 'endReached', { distanceFromEnd: 0 });
+  expect(search).toHaveBeenCalledTimes(2);
+  const second = { ...result, id: 'second', symbol: 'XYZ', price: null, hasPrice: false, changePercent: null };
+  const third = { ...result, id: 'third', symbol: 'DOWN', changePercent: -2 };
+  await act(async () => next.resolve({ items: [second, third], error: null, isStale: false, hasMore: false }));
+  expect(screen.getByText('XYZ')).toBeOnTheScreen();
+  expect(screen.getByText('—')).toBeOnTheScreen();
+  expect(screen.getByText(/-%2/)).toBeOnTheScreen();
+  fireEvent.press(screen.getByLabelText('XYZ izlemeye ekle'));
+  await waitFor(() => expect(toggle).toHaveBeenCalledWith('second', true));
+  view.rerender(<WatchlistSearchModal {...props} pendingInstrumentIds={new Set([assetId])} isMembershipLoading />);
+  expect(screen.getByLabelText('THYAO izlemeden çıkar')).toBeDisabled();
+});
+
+afterEach(() => {
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'light' } as ReturnType<typeof useAppTheme>);
+  jest.restoreAllMocks();
 });

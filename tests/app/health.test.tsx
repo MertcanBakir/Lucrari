@@ -1,4 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { Platform } from 'react-native';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import SupabaseHealthScreen from '@/app/supabase-health';
 import SystemHealthScreen from '@/app/system-health';
 import { useSupabaseHealth } from '@/hooks/use-supabase-health';
@@ -7,6 +9,7 @@ import { evaluateOverallHealth, groupJobsIntoSections, normalizeSystemHealthResp
 import { date } from '../ui/fixtures';
 
 const mockBack = jest.fn();
+jest.mock('@/hooks/use-color-scheme', () => ({ useColorScheme: jest.fn(() => 'light') }));
 jest.mock('expo-router', () => ({ useRouter: () => ({ back: mockBack }) }));
 jest.mock('@/hooks/use-supabase-health', () => ({ useSupabaseHealth: jest.fn() }));
 jest.mock('@/hooks/use-system-health', () => ({ useSystemHealth: jest.fn() }));
@@ -51,3 +54,26 @@ it('switches system health from initial loading to error, retries and renders re
   fireEvent.press(screen.getByLabelText('Geri Dön'));
   await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
 });
+
+it('shows an empty health report and prevents duplicate refreshes while retrying on web', async () => {
+  jest.replaceProperty(Platform, 'OS', 'web');
+  jest.mocked(useColorScheme).mockReturnValue('dark');
+  const state = { report: null, isLoading: false, isRefreshing: false, isStale: false,
+    error: 'unavailable', refetch, lastChecked: 0 };
+  const useHealth = jest.mocked(useSystemHealth).mockReturnValue(state);
+  const view = render(<SystemHealthScreen />);
+  fireEvent.press(screen.getByLabelText('Geri Dön'));
+  fireEvent.press(screen.getByLabelText('Durumu Yenile'));
+  await waitFor(() => expect(refetch).toHaveBeenCalledWith(true));
+  expect(mockBack).toHaveBeenCalledTimes(1);
+
+  useHealth.mockReturnValue({ ...state, isRefreshing: true });
+  view.rerender(<SystemHealthScreen />);
+  expect(screen.getByLabelText('Tekrar Dene')).toBeDisabled();
+  expect(screen.getByLabelText('Durumu Yenile')).toBeDisabled();
+  useHealth.mockReturnValue({ ...state, error: null });
+  view.rerender(<SystemHealthScreen />);
+  expect(screen.getByText(/Listelenecek servis durumu bulunamadı/)).toBeOnTheScreen();
+});
+
+afterEach(() => jest.restoreAllMocks());

@@ -56,14 +56,14 @@ npm test
 # React Native bileşen testlerini çalıştır
 npm run test:ui
 
-# Bileşen satır kapsamını ölç ve %85 eşiğini kontrol et
+# Bileşen kapsam raporunu üret
 npm run test:ui:coverage
 
-# Ekran ve hook testlerini ayrı ayrı çalıştır ve %85 satır kapsamını kontrol et
+# Ekran ve hook testlerini ayrı çalıştır ve kapsam raporlarını üret
 npm run test:app
 npm run test:hooks
 
-# Satır, koşul dalı ve fonksiyon kapsamını ölç ve %85 eşiğini kontrol et
+# Tüm testleri çalıştır ve CI ile aynı kapsam eşiklerini doğrula
 npm run test:coverage
 
 # TypeScript tip kontrolü
@@ -83,10 +83,9 @@ git diff --check
 
 CI, `main` dalına yapılan push'larda ve `main` hedefli pull request'lerde çalışır. GitHub'ın Actions sekmesinden elle de başlatılabilir.
 
-- **Kod kalitesi ve testler** bağımlılıkları kilit dosyasından kurar, TypeScript ve lint kontrollerini çalıştırır ve testlerde yüklenen `services/` ve `utils/` modüllerinin toplam kapsamını ölçer. Satır, koşul dalı ve fonksiyon kapsamının her biri en az %85 olmalıdır. `Code quality and tests` kontrolü `main` dalına birleştirme için zorunludur. Test ve kapsam raporu 14 gün indirilebilir.
+- **Kod kalitesi ve testler** bağımlılıkları kilit dosyasından kurar, TypeScript kontrolünü çalıştırır ve `app/`, `components/`, `constants/`, `context/`, `hooks/`, `scripts/`, `services/`, `tests/`, `types/`, `utils/` ve ESLint yapılandırmasını tarar. Lint hatası veya uyarısı kontrolü başarısız yapar. `Code quality and tests` kontrolü `main` dalına birleştirme için zorunludur.
 - **Dependency Review**, `main` hedefli pull request'lerde aynı zorunlu kontrolün parçası olarak yeni ve güncellenen bağımlılıkları tarar. Uygulama, geliştirme ve kapsamı belirlenemeyen bağımlılıklardaki bilinen `high` ve `critical` açıklar birleştirmeyi engeller. Bu adım GitHub Dependency Graph özelliğini kullanır.
-- **Bileşen testleri**, aynı zorunlu kontrol içinde `tests/ui/` altındaki Jest ve React Native Testing Library testlerini çalıştırır. `components/` dizininin tamamı için en az %85 satır kapsamı gerekir. Kapsam raporu 14 gün indirilebilir.
-- **Ekran ve hook testleri**, `tests/app/` ve `tests/hooks/` dizinlerinde çalışır. `app/` ve `hooks/` dizinlerinin her biri ayrı ayrı en az %85 satır kapsamına ulaşmalıdır. Bileşen, ekran ve hook kapsam raporları GitHub'da `frontend-test-coverage` adıyla indirilebilir.
+- **Test kapsamı**, tüm Jest testlerinden gelen sonuçları birleştirir. `app/`, `components/`, `hooks/`, `services/` ve `utils/` dizinlerinin her biri için satır, koşul dalı, fonksiyon ve ifade kapsamı ayrı ayrı en az %85 olmalıdır. Testlerce hiç yüklenmeyen kaynak dosyaları da ölçüme girer. `frontend-test-coverage` ve `test-coverage` raporları GitHub Actions'tan 14 gün indirilebilir.
 - **Expo paketleme**, `main` dalına birleştirme için zorunludur. SDK bağımlılık uyumluluğunu kontrol eder ve iOS ile Android için JavaScript paketlerini üretir. EAS build'leri ihtiyaç olduğunda elle alınır.
 - **Supabase SQL**, `main` dalına birleştirme için zorunludur. Her çalıştırmada geçici bir veritabanı açar, Lucrari'nin migration'larını uygular ve `supabase/tests/` altındaki SQL testlerini çalıştırır. FinBot ve TradingAgents'ın entegrasyon testleri kendi projelerinde yürütülür.
 

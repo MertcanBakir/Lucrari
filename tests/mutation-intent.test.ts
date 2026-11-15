@@ -10,7 +10,7 @@
  * 6. createResetIntent generates fresh clientRequestId on each distinct user confirmation.
  */
 
-import { describe, it } from 'node:test';
+import { describe, it } from '@jest/globals';
 import assert from 'node:assert/strict';
 import { getOrCreateMutationIntent, createResetIntent } from '../utils/mutation-intent';
 

@@ -1,5 +1,6 @@
+import { useAppTheme } from '@/context/theme-context';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import { CashAccountSetupModal } from '@/components/portfolio/cash-account-setup-modal';
 import { PortfolioActivityEntryCard } from '@/components/portfolio/portfolio-activity-entry-card';
 import { PortfolioAllocationCard } from '@/components/portfolio/portfolio-allocation-card';
@@ -233,4 +234,124 @@ it('shows why a position buy is blocked and can switch to a successful sale', as
   fireEvent.press(await screen.findByText(/Satış İşlemini Kaydet/));
   await waitFor(() => expect(submit).toHaveBeenCalledWith(expect.objectContaining({ transactionType: 'SELL', quantity: 2 })));
   await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+});
+
+it('displays losses and converts a dollar position only with an available exchange rate', () => {
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'dark' } as ReturnType<typeof useAppTheme>);
+  const modal = { visible: true, onClose: jest.fn(), onTrade: jest.fn() };
+  const losing = { ...position, currency: 'USD' as const, market: 'NASDAQ100' as const, latest_price: 75,
+    unrealized_pnl: null, realized_pnl: -5, change_amount: null, change_percent: -5,
+    remaining_cost_basis: 0, price_is_stale: true };
+  const view = render(<PositionDetailModal {...modal} position={null} currencyMode="TRY" usdTryRate={null} />);
+  expect(screen.queryByText('Piyasa Değeri')).toBeNull();
+  view.rerender(<PositionDetailModal {...modal} position={losing} currencyMode="USD" usdTryRate={32} />);
+  expect(screen.getByText('Eski Fiyat')).toBeOnTheScreen();
+  expect(screen.getByText(/-%5[,.]00/)).toBeOnTheScreen();
+  view.rerender(<PositionDetailModal {...modal} position={losing} currencyMode="TRY" usdTryRate={null} />);
+  expect(screen.getByText('—')).toBeOnTheScreen();
+  view.rerender(<PositionDetailModal {...modal} position={{ ...losing, average_cost: 0, realized_pnl: 0, change_percent: null }}
+    currencyMode="TRY" usdTryRate={32} />);
+  expect(screen.queryByText('FIFO Gerçekleşmiş K/Z')).toBeNull();
+  view.rerender(<PositionDetailModal {...modal} position={position} currencyMode="USD" usdTryRate={null} />);
+  expect(screen.getByText('—')).toBeOnTheScreen();
+});
+
+it('retries a failed buy with the same request ID, then accepts the corrected trade', async () => {
+  jest.replaceProperty(Platform, 'OS', 'web');
+  const close = jest.fn();
+  const submit = jest.fn().mockRejectedValueOnce(new Error('fetch failed')).mockResolvedValueOnce(undefined);
+  const props = { visible: true, position, availableCash: 500, isCashInitialized: true, onClose: close, onSubmit: submit };
+  const view = render(<PositionTradeModal {...props} />);
+  fireEvent.changeText(screen.getByPlaceholderText('0'), '1');
+  fireEvent.press(await screen.findByText(/Alış İşlemini Kaydet/));
+  await waitFor(() => expect(Alert.alert).toHaveBeenCalled());
+  fireEvent.press(await screen.findByText(/Alış İşlemini Kaydet/));
+  await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+  expect(submit.mock.calls[0][0].clientRequestId).toBe(submit.mock.calls[1][0].clientRequestId);
+  view.rerender(<PositionTradeModal {...props} visible={false} />);
+  expect(screen.queryByText(/Alış İşlemini Kaydet/)).toBeNull();
+});
+
+it('filters holdings across markets and permits a sale with a manually supplied price', async () => {
+  jest.replaceProperty(Platform, 'OS', 'web');
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'dark' } as ReturnType<typeof useAppTheme>);
+  const submit = jest.fn().mockRejectedValueOnce(new Error('invalid trade')).mockResolvedValueOnce(undefined);
+  const other = [
+    { ...position, instrument_id: '6ba7b812-9dad-11d1-80b4-00c04fd430c8', symbol: 'BTC', market: 'CRYPTO' as const,
+      currency: 'USD' as const, latest_price: null, change_percent: null, change_amount: null, company_name: '' },
+    { ...position, symbol: 'FUND', market: 'TEFAS' as const, quantity: 1 },
+    { ...position, symbol: 'USD', market: 'FX' as const, price_is_stale: true },
+  ];
+  render(<TransactionModal visible initialType="SELL" positions={[position, ...other]} isCashInitialized
+    onClose={jest.fn()} onSubmitTransaction={submit} onSubmitCashFlow={jest.fn()} />);
+  fireEvent.changeText(screen.getByPlaceholderText(/varlıklarda ara/), 'Türk Hava');
+  expect(screen.getAllByText('THYAO').length).toBeGreaterThan(0);
+  fireEvent.changeText(screen.getByPlaceholderText(/varlıklarda ara/), '');
+  fireEvent.press(screen.getByText('Kripto'));
+  fireEvent.press(screen.getAllByText('BTC')[0]);
+  fireEvent.press(screen.getByText('Tümü (%100)'));
+  fireEvent.changeText(screen.getByPlaceholderText('0.00'), '25');
+  fireEvent.press(await screen.findByText(/Satış İşlemini Kaydet/));
+  await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('İşlem Başarısız', 'invalid trade'));
+  fireEvent.press(await screen.findByText(/Satış İşlemini Kaydet/));
+  await waitFor(() => expect(submit).toHaveBeenCalledTimes(2));
+  expect(submit.mock.calls[1][0]).toMatchObject({ currency: 'USD', quantity: 8, unitPrice: 25 });
+});
+
+it('shows empty and rejected catalog searches and allows selection with missing market price', async () => {
+  jest.replaceProperty(Platform, 'OS', 'web');
+  const submit = jest.fn();
+  lookup.mockResolvedValueOnce({ items: [], error: null, isStale: false, hasMore: false })
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValueOnce({
+      items: [{ ...instrument, price: null, hasPrice: false, isStale: true }], error: null, isStale: true, hasMore: false,
+    });
+  render(<TransactionModal visible isCashInitialized availableCashTry={1000} onClose={jest.fn()}
+    onSubmitTransaction={submit} onSubmitCashFlow={jest.fn()} />);
+  await waitFor(() => expect(lookup).toHaveBeenCalledTimes(1));
+  expect(await screen.findByText(/Bu kategoride listelenecek/)).toBeOnTheScreen();
+  fireEvent.changeText(screen.getByPlaceholderText('Sembol veya şirket adı ara...'), 'THY');
+  expect(await screen.findByText(/Piyasa verileri yüklenirken bir sorun/)).toBeOnTheScreen();
+  fireEvent.press(screen.getByText('Tekrar Dene'));
+  fireEvent.press(await screen.findByText('THYAO'));
+  expect(screen.getAllByText('Eski Fiyat').length).toBeGreaterThan(0);
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it('separates missing returns from a known loss on the portfolio summary', () => {
+  const props = {
+    currencyMode: 'USD' as const, pnlMode: 'DAILY' as const, usdTryRate: 32,
+    onTogglePnlMode: jest.fn(), onToggleCurrency: jest.fn(), onOpenChart: jest.fn(),
+  };
+  const stats = calculatePortfolioStats(positions, cash, {
+    rate: 32, rateAt: date, isStale: false, staleReason: null, isAvailable: true, source: 'database',
+  });
+  const view = render(<PortfolioSummaryCard {...props} stats={{
+    ...stats, totalPortfolioValueTry: null, positionsMarketValueTry: null, dailyPnlTry: null,
+    dailyPnlPct: null, isCashInitialized: false,
+  }} />);
+  expect(screen.getByText('Kurulum Gerekli')).toBeOnTheScreen();
+  expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2);
+  view.rerender(<PortfolioSummaryCard {...props} stats={{ ...stats, dailyPnlTry: -160, dailyPnlPct: -5 }} />);
+  expect(screen.getByText(/-\$5[,.]00/)).toBeOnTheScreen();
+  expect(screen.getByText(/-%5[,.]00/)).toBeOnTheScreen();
+});
+
+it('requires a manual price for a missing market quote and supports fractional sales', async () => {
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'dark' } as ReturnType<typeof useAppTheme>);
+  jest.replaceProperty(Platform, 'OS', 'web');
+  const submit = jest.fn().mockResolvedValue(undefined);
+  const close = jest.fn();
+  const props = { initialAction: 'SELL' as const, availableCash: 0, isCashInitialized: true, onClose: close, onSubmit: submit };
+  const view = render(<PositionTradeModal {...props} visible position={null} />);
+  expect(screen.queryByText('Piyasa Fiyatı')).toBeNull();
+  view.rerender(<PositionTradeModal {...props} visible position={{ ...position, quantity: 1.5, latest_price: null, price_is_stale: true }} />);
+  expect(screen.getByText('Eski Fiyat')).toBeOnTheScreen();
+  const price = screen.getByPlaceholderText('0.00');
+  expect(price).toHaveDisplayValue('');
+  fireEvent.press(screen.getByText('%50'));
+  expect(await screen.findByDisplayValue('0.75')).toBeOnTheScreen();
+  fireEvent.changeText(price, '20');
+  fireEvent.press(await screen.findByText(/Satış İşlemini Kaydet/));
+  await waitFor(() => expect(submit).toHaveBeenCalledWith(expect.objectContaining({ quantity: 0.75, unitPrice: 20 })));
 });

@@ -5,6 +5,5 @@ module.exports = {
   setupFilesAfterEnv: ['<rootDir>/tests/ui/setup.ts'],
   collectCoverageFrom: ['components/**/*.{ts,tsx}'],
   coverageDirectory: '<rootDir>/coverage/ui',
-  coverageThreshold: { global: { lines: 85 } },
   coverageReporters: ['text', 'lcov'],
 };

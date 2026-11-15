@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+import { useAppTheme } from '@/context/theme-context';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { AnalysisHealthMenuItem } from '@/components/health/analysis-health-menu-item';
 import { SupabaseHealthCard } from '@/components/health/supabase-health-card';
@@ -129,4 +131,26 @@ it('distinguishes an initial health check from a failed request', () => {
   hook.mockReturnValue({ ...state, isLoading: false, error: 'Sunucuya erişilemiyor' });
   view.rerender(<SystemHealthMenuItem />);
   expect(screen.getByText('Durum bilgisi alınamadı')).toBeOnTheScreen();
+});
+
+it('renders degraded and unavailable diagnostics, including manual refresh in dark mode on web', async () => {
+  jest.replaceProperty(Platform, 'OS', 'web');
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'dark' } as ReturnType<typeof useAppTheme>);
+  const health = jest.mocked(useSupabaseHealth);
+  health.mockReturnValue({ ...baseHealth, report: null, error: new Error('Connection unavailable'), lastChecked: null });
+  const view = render(<SupabaseHealthCard />);
+  expect(screen.getByText('YAPILANDIRMA BEKLİYOR')).toBeOnTheScreen();
+  health.mockReturnValue({ ...baseHealth, report: { ...report, overallStatus: 'degraded', averageLatencyMs: null } });
+  view.rerender(<SupabaseHealthCard />);
+  expect(screen.getByText('KISITLI ERİŞİM')).toBeOnTheScreen();
+  fireEvent.press(screen.getByText('Bağlantıyı Yeniden Kontrol Et'));
+  await waitFor(() => expect(refetch).toHaveBeenCalled());
+  health.mockReturnValue({ ...baseHealth, isRefetching: true, report: { ...report, overallStatus: 'unhealthy', errorMessage: 'Unavailable' } });
+  view.rerender(<SupabaseHealthCard />);
+  expect(screen.queryByText('Bağlantıyı Yeniden Kontrol Et')).toBeNull();
+});
+
+afterEach(() => {
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'light' } as ReturnType<typeof useAppTheme>);
+  jest.restoreAllMocks();
 });

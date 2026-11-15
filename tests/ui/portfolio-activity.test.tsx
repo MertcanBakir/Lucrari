@@ -1,4 +1,6 @@
+import { useAppTheme } from '@/context/theme-context';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { Platform } from 'react-native';
 import { PortfolioActivityDetailModal } from '@/components/portfolio-activity/portfolio-activity-detail-modal';
 import { PortfolioActivityEmptyView } from '@/components/portfolio-activity/portfolio-activity-empty-view';
 import { PortfolioActivityFooter } from '@/components/portfolio-activity/portfolio-activity-footer';
@@ -78,4 +80,38 @@ it('shows the section label with a count when available', () => {
   expect(screen.getByText(/3/)).toBeOnTheScreen();
   view.rerender(<PortfolioActivitySectionHeader title="Bugün" />);
   expect(screen.queryByText(/3/)).toBeNull();
+});
+
+afterEach(() => {
+  jest.mocked(useAppTheme).mockClear();
+  jest.restoreAllMocks();
+});
+
+it.each([
+  ['BUY', 'Varlık Alışı'],
+  ['SELL', 'Varlık Satışı'],
+  ['DEPOSIT', 'Para Yatırma'],
+  ['WITHDRAWAL', 'Para Çekme'],
+] as const)('shows the correct %s record and optional fields in dark mode', async (activityType, label) => {
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'dark' } as ReturnType<typeof useAppTheme>);
+  jest.replaceProperty(Platform, 'OS', 'web');
+  const close = jest.fn();
+  const isCash = activityType === 'DEPOSIT' || activityType === 'WITHDRAWAL';
+  const item = {
+    ...activity, activityType, sourceKind: isCash ? 'CASH_FLOW' as const : 'TRANSACTION' as const,
+    companyName: null, market: null, notes: null, symbol: isCash ? null : 'THYAO',
+  };
+  const view = render(<><PortfolioActivityDetailModal item={item} visible onClose={close} />
+    <PortfolioActivityItemCard item={item} onPress={jest.fn()} /></>);
+  expect(screen.getByText(`${label} Detayı`)).toBeOnTheScreen();
+  expect(screen.queryByText('Şirket')).toBeNull();
+  expect(screen.queryByText('Açıklama / Not')).toBeNull();
+  if (isCash) expect(screen.queryByText('Birim Fiyat')).toBeNull();
+  else expect(screen.getByText('Birim Fiyat')).toBeOnTheScreen();
+  view.rerender(<><PortfolioActivityDetailModal item={{ ...item, isReversed: true }} visible onClose={close} />
+    <PortfolioActivityItemCard item={item} onPress={jest.fn()} /></>);
+  expect(screen.getByText('Bu İşlem Geri Alınmıştır')).toBeOnTheScreen();
+  expect(screen.queryByText(/Geri Alınma:/)).toBeNull();
+  fireEvent.press(screen.getByRole('button', { name: 'Tamam' }));
+  await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
 });

@@ -9,7 +9,7 @@
  * - Initialized cash accounts allow SELL and DEPOSIT even when availableCash is unavailable (since they do not reduce cash)
  */
 
-import { describe, it } from 'node:test';
+import { describe, it } from '@jest/globals';
 import assert from 'node:assert/strict';
 import { evaluateCashMutation } from '../utils/portfolio-guard';
 

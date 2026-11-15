@@ -124,3 +124,35 @@ it('applies only relevant subscription changes and retries membership and auth f
   await act(() => hook.result.current.refetch());
   expect(retryAuth).toHaveBeenCalledTimes(1);
 });
+
+it('avoids duplicate navigation and ignores refreshes from a different page', async () => {
+  const hook = renderHook(() => useWatchlist());
+  await waitFor(() => expect(hook.result.current.viewState.state).toBe('ready'));
+  const calls = service.fetchWatchlistPage.mock.calls.length;
+  await act(async () => {
+    await hook.result.current.goToPage(0);
+    await hook.result.current.goToPage(-1);
+    await hook.result.current.prevPage();
+    await hook.result.current.collapse();
+  });
+  expect(service.fetchWatchlistPage).toHaveBeenCalledTimes(calls);
+  const publish = service.subscribeWatchlistChanges.mock.calls[0][0];
+  act(() => publish({ userId: 'account-a', refreshedPage: { ...makePage(20), isStale: true } }));
+  expect(hook.result.current.isStale).toBe(false);
+  await act(() => hook.result.current.goToPage(2));
+  await act(() => hook.result.current.nextPage());
+  expect(hook.result.current.pageIndex).toBe(2);
+  expect(service.fetchWatchlistPage).toHaveBeenLastCalledWith({ limit: 20, offset: 40, forceRefresh: false });
+  hook.unmount();
+  act(() => publish({ userId: 'account-a', refreshedPage: makePage(40) }));
+});
+
+it('keeps a fallback error for unexpected page failures and does not queue an empty instrument', async () => {
+  const hook = renderHook(() => useWatchlist());
+  await waitFor(() => expect(hook.result.current.viewState.state).toBe('ready'));
+  service.fetchWatchlistPage.mockRejectedValueOnce('offline');
+  await act(() => hook.result.current.refetch());
+  expect(hook.result.current.error?.message).toBe('İzleme listesi yüklenemedi');
+  expect(await hook.result.current.toggleWatchlistItem('', true)).toMatchObject({ success: false });
+  expect(service.setWatchlistItem).not.toHaveBeenCalled();
+});

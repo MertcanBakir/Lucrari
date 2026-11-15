@@ -1,3 +1,4 @@
+import { useAppTheme } from '@/context/theme-context';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Text } from 'react-native';
 import * as Haptics from 'expo-haptics';
@@ -49,4 +50,18 @@ it('forwards the tab press-in event and gives tactile feedback on iOS', () => {
   fireEvent(screen.getByText('Takvim'), 'pressIn', event);
   expect(onPressIn).toHaveBeenCalledWith(event);
   expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
+});
+
+afterEach(() => {
+  jest.mocked(useAppTheme).mockClear();
+  jest.restoreAllMocks();
+});
+
+it('renders the scrolling content in dark mode', () => {
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'dark' } as ReturnType<typeof useAppTheme>);
+  render(<ParallaxScrollView headerImage={<Text>Header</Text>}
+    headerBackgroundColor={{ light: 'white', dark: 'black' }}>
+    <Text>Dark content</Text>
+  </ParallaxScrollView>);
+  expect(screen.getByText('Dark content')).toBeOnTheScreen();
 });

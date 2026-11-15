@@ -45,7 +45,7 @@
  *    - Read-only safety invariant: never invokes mutation RPCs or FIFO engines.
  */
 
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from '@jest/globals';
 import assert from 'node:assert';
 import {
   setSupabaseClientForTesting,

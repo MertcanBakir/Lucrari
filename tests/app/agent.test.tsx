@@ -99,3 +99,24 @@ it('keeps data visible for background errors and retries history and model loadi
   expect(screen.getByText(/Oturum hazırlanıyor/)).toBeOnTheScreen();
   expect(screen.getByText(/Analiz geçmişi yükleniyor/)).toBeOnTheScreen();
 });
+
+it('shows loading and unavailable connection summaries and opens the signed-out account form', async () => {
+  const state = makeAgent();
+  const hook = jest.mocked(useAnalysis).mockReturnValue({ ...state, connections: { ...state.connections, isLoading: true } });
+  const view = render(<AgentScreen />);
+  expect(screen.getByText('Bağlantılar yükleniyor…')).toBeOnTheScreen();
+  hook.mockReturnValue({ ...state, connections: { ...state.connections, error: 'offline' } });
+  view.rerender(<AgentScreen />);
+  expect(screen.getByText('Bağlantı durumunu görüntüleyin')).toBeOnTheScreen();
+  hook.mockReturnValue({ ...state, isLoadingMore: true, historyTotalCount: null });
+  view.rerender(<AgentScreen />);
+  expect(screen.getByText('Geçmiş ve devam eden raporlar')).toBeOnTheScreen();
+  fireEvent.press(screen.getByText('Yeni Analiz'));
+  expect(await screen.findByPlaceholderText('AAPL')).toBeOnTheScreen();
+  fireEvent.press(screen.getByLabelText('Kapat'));
+  hook.mockReturnValue({ ...state, isAuthenticated: false, modelSelection: null, providers: null });
+  jest.mocked(useAuth).mockReturnValue({ user: null } as ReturnType<typeof useAuth>);
+  view.rerender(<AgentScreen />);
+  fireEvent.press(screen.getByText('Giriş Yap veya Hesap Oluştur'));
+  expect(screen.getByLabelText('E-posta')).toBeOnTheScreen();
+});

@@ -150,3 +150,31 @@ it('separates portfolio lookup errors from activity errors and retries each inde
   expect(hook.result.current.portfolioId).toBeNull();
   expect(hook.result.current.viewState).toBe('auth_failed');
 });
+
+it.each([['Network unavailable', /İnternet/], ['timeout', /İnternet/], ['JWT expired', /oturumu/],
+  ['auth unavailable', /oturumu/], ['oturum yok', /oturumu/], ['session missing', /oturumu/],
+  ['unknown failure', /unknown failure/]] as const)('handles an initial portfolio error %s without stale data', async (error, message) => {
+  portfolio.fetchPortfolioDataCombined.mockRejectedValueOnce(error);
+  const hook = renderHook(() => usePortfolio());
+  await waitFor(() => expect(hook.result.current.error).toMatch(message));
+  expect(hook.result.current.isStale).toBe(false);
+});
+
+it('flags a position price as stale even with a current exchange rate', async () => {
+  portfolio.fetchPortfolioDataCombined.mockResolvedValueOnce({
+    ...combined, positions: [{ ...position, price_is_stale: true }],
+  });
+  const hook = renderHook(() => usePortfolio());
+  await waitFor(() => expect(hook.result.current.isStale).toBe(true));
+  expect(hook.result.current.error).toBeNull();
+});
+
+it('does not fetch combined data when a portfolio lookup resolves after unmount', async () => {
+  const request = deferred<Awaited<ReturnType<typeof portfolio.ensureDefaultPortfolio>>>();
+  portfolio.ensureDefaultPortfolio.mockReturnValueOnce(request.promise);
+  const hook = renderHook(() => usePortfolio());
+  await waitFor(() => expect(portfolio.ensureDefaultPortfolio).toHaveBeenCalled());
+  hook.unmount();
+  await act(async () => request.resolve(makePortfolio('unmounted')));
+  expect(portfolio.fetchPortfolioDataCombined).not.toHaveBeenCalled();
+});

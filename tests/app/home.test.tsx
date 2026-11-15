@@ -152,3 +152,28 @@ it('selects, clears, and exports filtered calendar events with retry feedback', 
   fireEvent.press(screen.getByLabelText('Aktarım modunu kapat'));
   expect(await screen.findByText('Apple Takvime Aktar')).toBeOnTheScreen();
 });
+
+it('does not offer calendar export on unsupported platforms and refreshes only stale calendar data', async () => {
+  jest.mocked(isAppleCalendarSupported).mockReturnValue(false);
+  jest.mocked(useMonthlyCalendar).mockReturnValue({ ...calendar, error: 'Calendar last good copy' });
+  render(<HomeScreen />);
+  expect(screen.queryByText('Apple Takvime Aktar')).toBeNull();
+  fireEvent.press(screen.getByText('Yenile'));
+  expect(calendar.refetch).toHaveBeenCalledTimes(1);
+  expect(ownership.refetch).not.toHaveBeenCalled();
+  expect(watchlist.refetch).not.toHaveBeenCalled();
+});
+
+it('refreshes only the active private filter when its data becomes stale', async () => {
+  jest.mocked(usePortfolioCalendarOwnership).mockReturnValue({ ...ownership, isStale: true });
+  jest.mocked(useWatchlistMembership).mockReturnValue({ ...watchlist, isStale: true });
+  render(<HomeScreen />);
+  await choose('Portföyüm');
+  fireEvent.press(screen.getByText('Yenile'));
+  expect(ownership.refetch).toHaveBeenCalledTimes(1);
+  expect(watchlist.refetch).not.toHaveBeenCalled();
+  await choose('İzleme Listesi');
+  fireEvent.press(screen.getByText('Yenile'));
+  expect(watchlist.refetch).toHaveBeenCalledTimes(1);
+  expect(calendar.refetch).not.toHaveBeenCalled();
+});

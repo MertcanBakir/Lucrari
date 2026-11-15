@@ -10,7 +10,7 @@
  * - Stale data (beyond TTL) triggers focus refresh
  */
 
-import { describe, it } from 'node:test';
+import { describe, it } from '@jest/globals';
 import assert from 'node:assert/strict';
 import { shouldRefreshOnFocus, FOCUS_REFETCH_STALE_TTL_MS } from '../utils/focus-refresh';
 

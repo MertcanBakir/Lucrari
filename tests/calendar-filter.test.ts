@@ -24,7 +24,7 @@
  * 20. Month B initial failure does not expose Month A events or false empty portfolio/day state.
  */
 
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from '@jest/globals';
 import assert from 'node:assert/strict';
 import {
   filterCalendarEvents,

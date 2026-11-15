@@ -1,5 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { Alert, Linking } from 'react-native';
+import { useAppTheme } from '@/context/theme-context';
+import { deferred } from '../helpers/deferred';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { Alert, Linking, Platform, TouchableOpacity } from 'react-native';
 import type { AlertButton } from 'react-native';
 import { CalendarFilterChips } from '@/components/calendar/calendar-filter-chips';
 import { DayEventsList } from '@/components/calendar/day-events-list';
@@ -17,6 +19,7 @@ jest.mock('@/services/calendar/apple-calendar-service', () => ({
 const selectedDate = new Date(2026, 7, 31, 12);
 
 beforeEach(() => {
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'light' } as ReturnType<typeof useAppTheme>);
   jest.spyOn(Alert, 'alert').mockImplementation(() => {});
   jest.mocked(isAppleCalendarSupported).mockReturnValue(true);
 });
@@ -106,4 +109,56 @@ it('explains the empty day differently for active portfolio and watchlist filter
   view.rerender(<DayEventsList selectedDate={selectedDate} events={[earnings]} activeFilter="watchlist" />);
   fireEvent.press(screen.getByLabelText('THYAO detaylarını aç'));
   expect(await screen.findAllByText('İZLEME LİSTEMDE')).not.toHaveLength(0);
+});
+
+it('navigates month boundaries and selects an adjacent-month day in dark mode on web', async () => {
+  jest.replaceProperty(Platform, 'OS', 'web');
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'dark' } as ReturnType<typeof useAppTheme>);
+  const change = jest.fn();
+  const select = jest.fn();
+  const props = {
+    year: 2026, month: 7, onMonthChange: change, onSelectDate: select, selectedDate: new Date(2026, 7, 17),
+    dayIndicators: {
+      '2026-08-17': { count: 2, hasEarnings: true, hasEconomic: true },
+      '2026-08-18': { count: 1, hasEarnings: false, hasEconomic: true },
+    },
+  };
+  const view = render(<MonthlyCalendar {...props} isLoading />);
+  const [previous, next] = view.UNSAFE_getAllByType(TouchableOpacity);
+  fireEvent.press(previous);
+  fireEvent.press(next);
+  expect(change.mock.calls).toEqual([[2026, 6], [2026, 8]]);
+  fireEvent.press(screen.getAllByText('27')[0]);
+  expect(change).toHaveBeenLastCalledWith(2026, 6);
+  expect(select).toHaveBeenCalledWith(new Date(2026, 6, 27));
+  view.rerender(<MonthlyCalendar {...props} isSelectionMode selectedDaysForExport={new Set(['2026-08-17'])} />);
+  expect(screen.getByText('✓')).toBeOnTheScreen();
+  expect(screen.getByText('○')).toBeOnTheScreen();
+  fireEvent.press(screen.getByText('18'));
+  expect(select).toHaveBeenCalledTimes(1);
+});
+
+it('reports source link exceptions and disables duplicate calendar exports', async () => {
+  jest.replaceProperty(Platform, 'OS', 'web');
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'dark' } as ReturnType<typeof useAppTheme>);
+  jest.spyOn(Linking, 'canOpenURL').mockRejectedValueOnce(new Error('browser unavailable'));
+  const request = deferred<Awaited<ReturnType<typeof exportEventsToAppleCalendar>>>();
+  jest.mocked(exportEventsToAppleCalendar).mockReturnValueOnce(request.promise);
+  const close = jest.fn();
+  const event = { ...earnings, dateKey: 'invalid', isInPortfolio: false, isInWatchlist: false, period: undefined,
+    portfolioQuantity: null };
+  const view = render(<EventDetailModal visible event={null} onClose={close} />);
+  expect(screen.queryByText('Apple Takvime Ekle')).toBeNull();
+  view.rerender(<EventDetailModal visible event={event} onClose={close} />);
+  fireEvent.press(screen.getByText(/Resmi Kaynağı/));
+  await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Hata', 'Kaynak adresi açılamadı.'));
+  fireEvent.press(screen.getByText('Apple Takvime Ekle'));
+  expect(screen.queryByText('Apple Takvime Ekle')).toBeNull();
+  await act(async () => request.resolve({ success: true, addedCount: 1 }));
+  const buttons = jest.mocked(Alert.alert).mock.lastCall?.[2];
+  buttons?.[0]?.onPress?.();
+  expect(openAppleCalendar).toHaveBeenLastCalledWith(expect.any(Date));
+  jest.mocked(isAppleCalendarSupported).mockReturnValue(false);
+  view.rerender(<EventDetailModal visible event={{ ...economic, country: undefined, period: undefined }} onClose={close} />);
+  expect(screen.queryByText('Apple Takvime Ekle')).toBeNull();
 });

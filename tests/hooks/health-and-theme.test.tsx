@@ -1,6 +1,8 @@
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import * as Native from 'react-native';
 import { useAuth } from '@/context/auth-context';
+import { useAppTheme } from '@/context/theme-context';
+import { deferred } from '../helpers/deferred';
 import { Colors } from '@/constants/theme';
 import { useAnalysisHealth } from '@/hooks/use-analysis-health';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -42,6 +44,7 @@ const systemReport = {
 
 beforeEach(() => {
   jest.resetAllMocks();
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'light' } as ReturnType<typeof useAppTheme>);
   mockFocused = true;
   backend.subscribeSupabaseHealth.mockReturnValue(jest.fn());
   system.subscribeSystemHealth.mockReturnValue(jest.fn());
@@ -122,4 +125,68 @@ it('refreshes an old system snapshot on focus once authentication is ready', asy
   hook.rerender(undefined);
   act(() => mockFocusCallback?.());
   await waitFor(() => expect(hook.result.current.lastChecked).toBeGreaterThan(1));
+});
+
+it('starts Supabase health from cache and ignores a late refresh after unmount', async () => {
+  const pending = deferred<typeof report>();
+  backend.getSupabaseHealthCacheSnapshot.mockReturnValue({ report, timestamp: 1 });
+  backend.checkSupabaseHealth.mockReturnValueOnce(pending.promise);
+  const hook = renderHook(() => useSupabaseHealth());
+  expect(hook.result.current).toMatchObject({ report, isLoading: false, lastChecked: new Date(date) });
+  expect(backend.checkSupabaseHealth).not.toHaveBeenCalled();
+  let refreshing: Promise<void>;
+  act(() => { refreshing = hook.result.current.refetch(); });
+  expect(hook.result.current.isRefetching).toBe(true);
+  hook.unmount();
+  act(() => backend.subscribeSupabaseHealth.mock.calls[0][0]({ ...report, averageLatencyMs: 10 }));
+  await act(async () => {
+    pending.resolve({ ...report, averageLatencyMs: 10 });
+    await refreshing;
+  });
+  expect(hook.result.current.report).toBe(report);
+});
+
+it('respects disabled automatic checks and surfaces a manual Error', async () => {
+  backend.checkSupabaseHealth.mockRejectedValueOnce(new Error('database unavailable'));
+  const hook = renderHook(() => useSupabaseHealth({ autoCheck: false }));
+  expect(hook.result.current.isLoading).toBe(false);
+  expect(backend.checkSupabaseHealth).not.toHaveBeenCalled();
+  await act(() => hook.result.current.refetch());
+  expect(hook.result.current.error?.message).toBe('database unavailable');
+});
+
+it('ignores rejected health requests after unmount', async () => {
+  const pending = deferred<typeof report>();
+  backend.checkSupabaseHealth.mockReturnValueOnce(pending.promise);
+  const hook = renderHook(() => useSupabaseHealth());
+  hook.unmount();
+  await act(async () => pending.reject(new Error('late failure')));
+  expect(hook.result.current.error).toBeNull();
+});
+
+it('leaves a stale system snapshot timestamp unchanged and handles disabled auto-fetch', async () => {
+  system.getSystemHealthCacheSnapshot.mockReturnValue({ report: systemReport, timestamp: 7 });
+  system.fetchSystemHealth.mockResolvedValueOnce({ ...systemReport, isStale: true });
+  const hook = renderHook(() => useSystemHealth({ autoFetch: false }));
+  act(() => mockFocusCallback?.());
+  expect(system.fetchSystemHealth).not.toHaveBeenCalled();
+  await act(() => hook.result.current.refetch(false));
+  expect(system.fetchSystemHealth).toHaveBeenCalledWith({ forceRefresh: false });
+  expect(hook.result.current).toMatchObject({ lastChecked: 7, isStale: true });
+});
+
+it('discards obsolete system health errors after a newer refresh succeeds', async () => {
+  const request = deferred<typeof systemReport>();
+  system.fetchSystemHealth.mockReturnValueOnce(request.promise).mockResolvedValueOnce(systemReport);
+  const hook = renderHook(() => useSystemHealth());
+  await act(() => hook.result.current.refetch());
+  await act(async () => request.reject('late failure'));
+  expect(hook.result.current).toMatchObject({ error: null, report: systemReport });
+});
+
+it('reports an initial system health failure without marking nonexistent data stale', async () => {
+  system.fetchSystemHealth.mockRejectedValueOnce('offline');
+  const hook = renderHook(() => useSystemHealth());
+  await waitFor(() => expect(hook.result.current.error).toBe('Sistem durumu bilgisi alınamadı.'));
+  expect(hook.result.current.isStale).toBe(false);
 });
