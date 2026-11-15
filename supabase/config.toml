@@ -1,0 +1,17 @@
+project_id = "finbot"
+
+[db]
+major_version = 17
+
+[db.migrations]
+enabled = true
+schema_paths = []
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[auth]
+enabled = true
+enable_signup = true
+enable_anonymous_sign_ins = true
