@@ -50,8 +50,18 @@ Lucrari, bireysel yatırımcılar için geliştirilmiş, BIST ve küresel piyasa
 Projenin tip kontrolü, kodlama standartları ve test süiti aşağıdaki komutlarla çalıştırılır:
 
 ```bash
-# Tüm testleri çalıştır
+# Servis ve iş mantığı testlerini çalıştır
 npm test
+
+# React Native bileşen testlerini çalıştır
+npm run test:ui
+
+# Bileşen satır kapsamını ölç ve %85 eşiğini kontrol et
+npm run test:ui:coverage
+
+# Ekran ve hook testlerini ayrı ayrı çalıştır ve %85 satır kapsamını kontrol et
+npm run test:app
+npm run test:hooks
 
 # Satır, koşul dalı ve fonksiyon kapsamını ölç ve %85 eşiğini kontrol et
 npm run test:coverage
@@ -74,8 +84,11 @@ git diff --check
 CI, `main` dalına yapılan push'larda ve `main` hedefli pull request'lerde çalışır. GitHub'ın Actions sekmesinden elle de başlatılabilir.
 
 - **Kod kalitesi ve testler** bağımlılıkları kilit dosyasından kurar, TypeScript ve lint kontrollerini çalıştırır ve testlerde yüklenen `services/` ve `utils/` modüllerinin toplam kapsamını ölçer. Satır, koşul dalı ve fonksiyon kapsamının her biri en az %85 olmalıdır. `Code quality and tests` kontrolü `main` dalına birleştirme için zorunludur. Test ve kapsam raporu 14 gün indirilebilir.
-- **Expo paketleme** SDK bağımlılık uyumluluğunu kontrol eder ve iOS ile Android için JavaScript paketlerini üretir. Bu kontrol yerel uygulama derlemesini, imzalamayı veya dağıtımı içermez. EAS build'leri ihtiyaç olduğunda elle alınır.
-- **Supabase SQL** her çalıştırmada geçici bir veritabanı açar, Lucrari'nin migration'larını uygular ve `supabase/tests/` altındaki SQL testlerini çalıştırır. FinBot ve TradingAgents'ın entegrasyon testleri kendi projelerinde yürütülür.
+- **Dependency Review**, `main` hedefli pull request'lerde aynı zorunlu kontrolün parçası olarak yeni ve güncellenen bağımlılıkları tarar. Uygulama, geliştirme ve kapsamı belirlenemeyen bağımlılıklardaki bilinen `high` ve `critical` açıklar birleştirmeyi engeller. Bu adım GitHub Dependency Graph özelliğini kullanır.
+- **Bileşen testleri**, aynı zorunlu kontrol içinde `tests/ui/` altındaki Jest ve React Native Testing Library testlerini çalıştırır. `components/` dizininin tamamı için en az %85 satır kapsamı gerekir. Kapsam raporu 14 gün indirilebilir.
+- **Ekran ve hook testleri**, `tests/app/` ve `tests/hooks/` dizinlerinde çalışır. `app/` ve `hooks/` dizinlerinin her biri ayrı ayrı en az %85 satır kapsamına ulaşmalıdır. Bileşen, ekran ve hook kapsam raporları GitHub'da `frontend-test-coverage` adıyla indirilebilir.
+- **Expo paketleme**, `main` dalına birleştirme için zorunludur. SDK bağımlılık uyumluluğunu kontrol eder ve iOS ile Android için JavaScript paketlerini üretir. EAS build'leri ihtiyaç olduğunda elle alınır.
+- **Supabase SQL**, `main` dalına birleştirme için zorunludur. Her çalıştırmada geçici bir veritabanı açar, Lucrari'nin migration'larını uygular ve `supabase/tests/` altındaki SQL testlerini çalıştırır. FinBot ve TradingAgents'ın entegrasyon testleri kendi projelerinde yürütülür.
 
 CI için canlı servis adresi, Expo hesabı veya GitHub Secret tanımlamak gerekmez.
 
