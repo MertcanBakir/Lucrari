@@ -12,6 +12,10 @@
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"tests/**/*.test.ts\"",
     "test:coverage": "node --import tsx --experimental-test-coverage --test-coverage-include=\"services/**/*.ts\" --test-coverage-include=\"utils/**/*.ts\" --test-coverage-lines=85 --test-coverage-branches=85 --test-coverage-functions=85 --test-reporter=spec --test \"tests/**/*.test.ts\"",
+    "test:ui": "jest --config tests/ui/jest.config.cjs --runInBand",
+    "test:ui:coverage": "npm run test:ui -- --coverage",
+    "test:app": "jest --config tests/app/jest.config.cjs --runInBand --coverage",
+    "test:hooks": "jest --config tests/hooks/jest.config.cjs --runInBand --coverage",
     "check:health": "tsx scripts/check-supabase-health.ts"
   },
   "dependencies": {
@@ -49,9 +53,14 @@
     "react-native-worklets": "0.5.1"
   },
   "devDependencies": {
+    "@testing-library/react-native": "^13.3.3",
+    "@types/jest": "29.5.14",
     "@types/react": "~19.1.0",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
+    "jest": "~29.7.0",
+    "jest-expo": "~54.0.18",
+    "react-test-renderer": "19.1.0",
     "tsx": "^4.23.12",
     "typescript": "~5.9.2"
   },

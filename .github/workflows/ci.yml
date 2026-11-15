@@ -31,6 +31,13 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - name: Review dependency changes
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5
+        with:
+          fail-on-severity: high
+          fail-on-scopes: runtime, development, unknown
+          license-check: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22'
@@ -42,6 +49,23 @@ jobs:
         run: npm run lint
       - name: Run tests and enforce 85% coverage
         run: npm run test:coverage | tee "$RUNNER_TEMP/test-coverage.txt"
+      - name: Run component tests and enforce 85% line coverage
+        run: npm run test:ui:coverage
+      - name: Run app screen tests and enforce 85% line coverage
+        run: npm run test:app
+      - name: Run hook tests and enforce 85% line coverage
+        run: npm run test:hooks
+      - name: Upload frontend coverage reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: frontend-test-coverage
+          path: |
+            coverage/ui/lcov-report/
+            coverage/app/lcov-report/
+            coverage/hooks/lcov-report/
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Upload test and coverage report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6

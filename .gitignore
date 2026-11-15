@@ -39,6 +39,9 @@ yarn-error.*
 /supabase/.temp/
 /supabase/.branches/
 
+# Test reports
+/coverage/
+
 # typescript
 *.tsbuildinfo
 
