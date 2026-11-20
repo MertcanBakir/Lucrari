@@ -7,9 +7,9 @@
 
 import type { MarketType, CurrencyCode } from '@/types/database';
 
-export type ActivitySourceKind = 'TRANSACTION' | 'CASH_FLOW';
-export type ActivityType = 'BUY' | 'SELL' | 'DEPOSIT' | 'WITHDRAWAL';
-export type PortfolioActivityFilter = 'ALL' | 'BUY' | 'SELL' | 'DEPOSIT' | 'WITHDRAWAL';
+export type ActivitySourceKind = 'TRANSACTION';
+export type ActivityType = 'BUY' | 'SELL';
+export type PortfolioActivityFilter = 'ALL' | 'BUY' | 'SELL';
 
 export interface PortfolioActivityFilterOption {
   id: PortfolioActivityFilter;
@@ -19,11 +19,9 @@ export interface PortfolioActivityFilterOption {
 }
 
 export const PORTFOLIO_ACTIVITY_FILTER_OPTIONS: readonly PortfolioActivityFilterOption[] = [
-  { id: 'ALL', label: 'Tümü', shortLabel: 'Tümü', description: 'Tüm alış, satış ve nakit hareketleri' },
+  { id: 'ALL', label: 'Tümü', shortLabel: 'Tümü', description: 'Tüm alış ve satış işlemleri' },
   { id: 'BUY', label: 'Alış', shortLabel: 'Alış', description: 'Yalnızca hisse ve varlık alış işlemleri' },
   { id: 'SELL', label: 'Satış', shortLabel: 'Satış', description: 'Yalnızca hisse ve varlık satış işlemleri' },
-  { id: 'DEPOSIT', label: 'Para Yatırma', shortLabel: 'Yatırma', description: 'Yalnızca nakit para yatırma hareketleri' },
-  { id: 'WITHDRAWAL', label: 'Para Çekme', shortLabel: 'Çekme', description: 'Yalnızca nakit para çekme hareketleri' },
 ] as const;
 
 /**

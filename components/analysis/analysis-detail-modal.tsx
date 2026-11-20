@@ -76,11 +76,9 @@ export function AnalysisDetailModal({
   const toggleSection = (section: AnalysisReportSection) => {
     if (section.code === 'disclaimer') return;
     const willOpen = !openCodes.has(section.code);
-    log.debug(willOpen ? 'Rapor bölümü açıldı' : 'Rapor bölümü daraltıldı', {
-      analysisId,
-      sectionCode: section.code,
-      partCount: Object.keys(section.parts).length,
-      hasMainContent: section.contentMarkdown !== null,
+    log.debug('analysis.section.toggled', {
+      message: 'Analysis section toggled.',
+      context: { analysisId, sectionCode: section.code, partCount: Object.keys(section.parts).length, hasMainContent: section.contentMarkdown !== null, isExpanded: willOpen }
     });
     setOpenCodes((previous) => {
       const next = new Set(previous);

@@ -7,7 +7,7 @@ import { SupabaseHealthMenuItem } from '@/components/health/supabase-health-menu
 import { SystemHealthJobCard } from '@/components/system-health/system-health-job-card';
 import { SystemHealthMenuItem } from '@/components/system-health/system-health-menu-item';
 import { SystemHealthOverallCard } from '@/components/system-health/system-health-overall-card';
-import { useAnalysisHealth } from '@/hooks/use-analysis-health';
+import { useAgentHealth } from '@/hooks/use-agent-health';
 import { useSupabaseHealth } from '@/hooks/use-supabase-health';
 import { useSystemHealth } from '@/hooks/use-system-health';
 import type { SupabaseHealthReport } from '@/types/health';
@@ -16,7 +16,7 @@ import { date } from './fixtures';
 
 const mockPush = jest.fn();
 jest.mock('expo-router', () => ({ useRouter: () => ({ push: mockPush }) }));
-jest.mock('@/hooks/use-analysis-health', () => ({ useAnalysisHealth: jest.fn() }));
+jest.mock('@/hooks/use-agent-health', () => ({ useAgentHealth: jest.fn() }));
 jest.mock('@/hooks/use-supabase-health', () => ({ useSupabaseHealth: jest.fn() }));
 jest.mock('@/hooks/use-system-health', () => ({ useSystemHealth: jest.fn() }));
 
@@ -39,14 +39,14 @@ const refetch = jest.fn().mockResolvedValue(undefined);
 const baseHealth = { report, isLoading: false, isRefetching: false, error: null, lastChecked: new Date(date), refetch };
 
 it('renders Agent connectivity and changes status when a check finishes', () => {
-  const status = jest.mocked(useAnalysisHealth);
-  status.mockReturnValue('checking');
+  const status = jest.mocked(useAgentHealth);
+  status.mockReturnValue({ status: 'checking', report: null } as ReturnType<typeof useAgentHealth>);
   const view = render(<AnalysisHealthMenuItem />);
   expect(screen.getByText('Kontrol ediliyor')).toBeOnTheScreen();
-  status.mockReturnValue('online');
+  status.mockReturnValue({ status: 'online', report: null } as ReturnType<typeof useAgentHealth>);
   view.rerender(<AnalysisHealthMenuItem />);
   expect(screen.getByText('Çevrimiçi')).toBeOnTheScreen();
-  status.mockReturnValue('unreachable');
+  status.mockReturnValue({ status: 'unreachable', report: null } as ReturnType<typeof useAgentHealth>);
   view.rerender(<AnalysisHealthMenuItem />);
   expect(screen.getByText('Erişilemiyor')).toBeOnTheScreen();
 });

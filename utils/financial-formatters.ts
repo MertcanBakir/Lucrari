@@ -50,42 +50,6 @@ export function formatCurrency(
   }).format(value);
 }
 
-export interface AvailableCashDisplayInfo {
-  isAvailable: boolean;
-  formatted: string;
-  rawAmount: number | null;
-}
-
-/**
- * Formats available cash balance strictly distinguishing valid non-negative numbers
- * (including exact zero ₺0,00 / $0.00) from missing/invalid/negative cash states ('—').
- */
-export function formatAvailableCash(
-  value: number | null | undefined,
-  currency: 'TRY' | 'USD' | 'EUR' = 'TRY',
-  locale: string = 'tr-TR'
-): AvailableCashDisplayInfo {
-  if (
-    value === null ||
-    value === undefined ||
-    typeof value !== 'number' ||
-    !Number.isFinite(value) ||
-    value < 0
-  ) {
-    return {
-      isAvailable: false,
-      formatted: EMPTY_VALUE_PLACEHOLDER,
-      rawAmount: null,
-    };
-  }
-
-  return {
-    isAvailable: true,
-    formatted: formatCurrency(value, currency, locale),
-    rawAmount: value,
-  };
-}
-
 /**
  * Formats percentage value.
  * Example: +2.45% or -0.80%

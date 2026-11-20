@@ -5,7 +5,7 @@
  * - If data has never loaded successfully before (hasLoadedSuccessfully = false / lastFetchedTimestamp <= 0),
  *   errors show the full initial PortfolioErrorView.
  * - Once data has loaded successfully at least once (hasLoadedSuccessfully = true / lastFetchedTimestamp > 0),
- *   subsequent refresh errors retain cached positions/cashState and display stale data indicators
+ *   subsequent refresh errors retain cached positions/cash and display stale data indicators
  *   rather than replacing the screen with a full error view (even for 0-position cash-only portfolios).
  */
 

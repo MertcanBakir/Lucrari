@@ -25,7 +25,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [themeMode, setThemeModeState] = useState<ThemeMode>('system');
 
   const setThemeMode = (mode: ThemeMode) => {
-    log.info('Tema değişti', { mod: mode });
+    log.info('theme.changed', {
+      message: 'Theme changed.',
+      context: { themeMode: mode }
+    });
     setThemeModeState(mode);
   };
 

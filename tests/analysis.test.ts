@@ -386,6 +386,122 @@ describe('FinBot Analysis frontend contract', () => {
     assert.equal(canUseAnalysisModelCatalog(selection, false, null), true);
   });
 
+  it('accepts macro reports and preserves historical social configuration and sentiment content', () => {
+    const base = {
+      effective_config: {
+        quick: { provider: 'chatgpt', model: 'quick' },
+        deep: { provider: 'chatgpt', model: 'deep' },
+        research_rounds: 1, risk_rounds: 1, language: 'tr',
+      },
+      upstream_version: '0.7.0',
+    };
+    const disclaimer = { code: 'disclaimer', title: 'Yasal uyarı', content_markdown: 'Yatırım tavsiyesi değildir.', parts: {} };
+    const current = normalizeAnalysisReport({
+      ...base,
+      effective_config: { ...base.effective_config, analysts: ['market', 'macro', 'news', 'fundamentals'] },
+      sections: [
+        { code: 'macro', title: 'Makro Analist', content_markdown: 'Faiz ve büyüme analizi', parts: {} },
+        { code: 'news', title: 'Haber', content_markdown: '## Yatırımcı Tepkisi\nPiyasa haberine yatırımcı tepkisi', parts: {} },
+        disclaimer,
+      ],
+    });
+    assert.ok(current);
+    assert.deepEqual(current.effectiveConfig.analysts, ['market', 'macro', 'news', 'fundamentals']);
+    assert.deepEqual(current.sections.map((section) => section.code), ['macro', 'news', 'disclaimer']);
+    assert.ok(current.sections[1].contentMarkdown?.includes('Yatırımcı Tepkisi'));
+
+    const legacy = normalizeAnalysisReport({
+      ...base,
+      effective_config: { ...base.effective_config, analysts: ['market', 'social', 'news'] },
+      sections: [
+        { code: 'sentiment', title: 'Yatırımcı Tepkisi', content_markdown: 'Eski yatırımcı duyarlılığı raporu', parts: { summary: 'Eski alt değerlendirme' } },
+        disclaimer,
+      ],
+    });
+    assert.ok(legacy);
+    assert.deepEqual(legacy.effectiveConfig.analysts, ['market', 'social', 'news']);
+    assert.equal(legacy.sections[0].code, 'sentiment');
+    assert.equal(legacy.sections[0].parts.summary, 'Eski alt değerlendirme');
+  });
+
+  it('logs request correlation and safe validation field paths without rejected values', async () => {
+    mockSupabaseSession();
+    let correlationId: string | null = null;
+    globalThis.fetch = async (_url, init) => {
+      correlationId = new Headers(init?.headers).get('X-Request-ID');
+      return Response.json({
+        detail: [
+          { loc: ['body', 'request', 'analysts', 0], msg: 'private rejection', input: 'private-analyst' },
+          { loc: ['body', 'private-field-name'], input: ACCESS_TOKEN },
+          { loc: [] },
+          { loc: ['body', 'request', 'ticker'] },
+          { loc: null },
+          { loc: ['request', 'analysts', -1] },
+        ],
+      }, { status: 422 });
+    };
+    await assert.rejects(startAnalysis({
+      ticker: 'AAPL', analysisDate: '2026-10-22', analysisHorizon: 'short_1m',
+      language: 'tr', analysts: ['macro'], authType: 'personal_chatgpt',
+      quickModel: 'quick', deepModel: 'deep',
+    }, 'private-idempotency-key'), (error: unknown) => isAnalysisApiError(error) && error.status === 422);
+    const failures = logger.getRecentLogs().filter((entry) => entry.event === 'analysis.request.failed');
+    assert.equal(failures.length, 1);
+    assert.deepEqual(failures[0].context.invalidFields, ['request.analysts.0', 'request.ticker']);
+    assert.equal(failures[0].context.requestId, correlationId);
+    assert.equal(failures[0].context.method, 'POST');
+    assert.equal(failures[0].context.path, '/v1/analyses');
+    assert.equal(failures[0].context.status, 422);
+    assert.equal(failures[0].context.attempt, 1);
+    assert.equal(typeof failures[0].context.durationMs, 'number');
+    assert.doesNotMatch(logger.exportLogs(), /private-rejection|private-analyst|private-field-name|private-idempotency-key/);
+    assert.equal(logger.exportLogs().includes(ACCESS_TOKEN), false);
+  });
+
+  it('keeps one correlation ID across auth refresh and logs cancellation at debug level', async () => {
+    mockSupabaseSession();
+    const ids: (string | null)[] = [];
+    globalThis.fetch = async (_url, init) => {
+      ids.push(new Headers(init?.headers).get('X-Request-ID'));
+      return ids.length === 1 ? new Response(null, { status: 401 }) : Response.json(validRecord());
+    };
+    await fetchAnalysisStatus(ANALYSIS_ID);
+    assert.ok(ids[0]);
+    assert.equal(ids[0], ids[1]);
+    const retry = logger.getRecentLogs().find((entry) => entry.event === 'analysis.request.retry');
+    assert.equal(retry?.context.retryReason, 'session_expired');
+    assert.equal(retry?.context.attempt, 1);
+    assert.equal(logger.getRecentLogs().filter((entry) => entry.level === 'warn').length, 0);
+
+    const controller = new AbortController();
+    globalThis.fetch = async () => {
+      controller.abort();
+      throw Object.assign(new Error('cancelled'), { name: 'AbortError' });
+    };
+    await assert.rejects(fetchAnalysisStatus(ANALYSIS_ID, controller.signal));
+    const failure = logger.getRecentLogs().at(-1);
+    assert.equal(failure?.event, 'analysis.request.failed');
+    assert.equal(failure?.level, 'debug');
+  });
+
+  it('handles empty and malformed backend error details without exposing the raw response', async () => {
+    mockSupabaseSession();
+    for (const body of [
+      { error: { code: 'BAD VALUE' } },
+      { error: { code: 422 }, detail: 'private backend text' },
+      { detail: [{ loc: Array(9).fill('ticker') }] },
+      null,
+    ]) {
+      globalThis.fetch = async () => Response.json(body, { status: 422 });
+      await assert.rejects(fetchAnalysisStatus(ANALYSIS_ID));
+      assert.deepEqual(logger.getRecentLogs().at(-1)?.context.invalidFields, []);
+    }
+    globalThis.fetch = async () => new Response(null, { status: 200 });
+    await assert.rejects(fetchAnalysisStatus(ANALYSIS_ID));
+    assert.ok(logger.getRecentLogs().some((entry) => entry.event === 'analysis.request.completed'));
+    assert.equal(logger.exportLogs().includes('private backend text'), false);
+  });
+
   it('requires disclaimer and validates effective report configuration', () => {
     const raw = {
       analysis_horizon: 'long_12m',
@@ -525,14 +641,14 @@ describe('FinBot Analysis frontend contract', () => {
 
     const serviceLogs = logger
       .getRecentLogs()
-      .filter((entry) => entry.scope === 'AnalysisService');
+      .filter((entry) => entry.scope === 'AnalysisService' && entry.event.startsWith('analysis.report.'));
     assert.deepEqual(
-      serviceLogs.map((entry) => entry.message),
-      ['Analiz raporu yükleniyor', 'Analiz raporu başarıyla yüklendi']
+      serviceLogs.map((entry) => entry.event),
+      ['analysis.report.loading', 'analysis.report.loaded']
     );
-    assert.equal(serviceLogs[1].metadata?.sectionCount, 2);
-    assert.equal(serviceLogs[1].metadata?.partCount, 1);
-    assert.equal(serviceLogs[1].metadata?.emptySectionCount, 0);
+    assert.equal(serviceLogs[1].context?.sectionCount, 2);
+    assert.equal(serviceLogs[1].context?.partCount, 1);
+    assert.equal(serviceLogs[1].context?.emptySectionCount, 0);
 
     const serializedLogs = JSON.stringify(serviceLogs);
     assert.equal(serializedLogs.includes(privateReportText), false);
@@ -751,7 +867,7 @@ describe('FinBot Analysis frontend contract', () => {
       analysisDate: '2026-10-22',
       analysisHorizon: 'short_1m',
       language: 'tr',
-      analysts: ['market', 'news'],
+      analysts: ['market', 'macro', 'news', 'fundamentals'],
       authType: 'personal_chatgpt',
       quickModel: 'gpt-6.1-sol',
       deepModel: 'gpt-6-astra',
@@ -762,7 +878,7 @@ describe('FinBot Analysis frontend contract', () => {
     assert.ok(typeof capturedBody === 'object' && capturedBody !== null);
     const body = capturedBody as {
       auth_type: string;
-      request: { analysis_horizon: string };
+      request: { analysis_horizon: string; analysts: string[] };
       connection_id: unknown;
       quick_model: string;
       deep_model: string;
@@ -770,6 +886,8 @@ describe('FinBot Analysis frontend contract', () => {
     assert.equal(Object.hasOwn(body, 'connection_id'), false);
     assert.equal(Object.hasOwn(body, 'models'), false);
     assert.equal(body.auth_type, 'personal_chatgpt');
+    assert.deepEqual(body.request.analysts, ['market', 'macro', 'news', 'fundamentals']);
+    assert.equal(body.request.analysts.includes('social'), false);
     assert.equal(body.request.analysis_horizon, 'short_1m');
     assert.equal(body.quick_model, 'gpt-6.1-sol');
     assert.equal(body.deep_model, 'gpt-6-astra');
@@ -847,7 +965,7 @@ describe('FinBot Analysis frontend contract', () => {
     const result = await startAnalysis({
       authType: 'api_key', ticker: 'NVDA', analysisDate: '2026-11-02',
       analysisHorizon: 'long_12m',
-      analysts: ['market'], language: 'tr',
+      analysts: ['market', 'macro', 'news', 'fundamentals'], language: 'tr',
       quick: { connectionId: ANALYSIS_ID, model: 'enabled-a' },
       deep: { connectionId: idempotencyKey, model: 'enabled-b' },
     }, idempotencyKey);
@@ -857,7 +975,7 @@ describe('FinBot Analysis frontend contract', () => {
         auth_type: 'api_key',
         request: {
           ticker: 'NVDA', analysis_date: '2026-11-02', analysis_horizon: 'long_12m',
-          profile: 'standard', language: 'tr', analysts: ['market'],
+          profile: 'standard', language: 'tr', analysts: ['market', 'macro', 'news', 'fundamentals'],
         },
         models: {
           quick: { connection_id: ANALYSIS_ID, model: 'enabled-a' },

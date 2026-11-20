@@ -92,7 +92,9 @@ export async function checkSupabaseHealth(
   inFlightHealthCheck = (async (): Promise<SupabaseHealthReport> => {
     try {
       const timestamp = new Date().toISOString();
-      log.info('Running Supabase health diagnostics');
+      log.debug('supabase.health.started', {
+        message: 'Supabase health started.'
+      });
       const configValidation = validateSupabaseConfig();
       const checks: ServiceCheckItem[] = [];
       const latencies: number[] = [];
@@ -349,9 +351,9 @@ export async function checkSupabaseHealth(
       };
       notifySubscribers(report);
 
-      log.info('Sağlık kontrolü tamamlandı', {
-        durum: overallStatus,
-        gecikme: `${averageLatencyMs ?? 0}ms`,
+      log.debug('supabase.health.completed', {
+        message: 'Supabase health completed.',
+        context: { status: overallStatus, latencyMs: averageLatencyMs }
       });
 
       return report;

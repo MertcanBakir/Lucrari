@@ -1,15 +1,4 @@
-/**
- * Portfolio Summary Card Component
- * 
- * Displays total portfolio value (positions + available cash), positions breakdown,
- * cash summary, setup CTA for uninitialized legacy accounts, and interactive PnL toggle box.
- * 
- * STRICT COMPLIANCE:
- * - NO hardcoded reference FX rate.
- * - Total Portfolio Value = Positions Market Value + Available Cash.
- * - Cash is non-negative at the domain and DB level.
- * - Handles partial valuation when market prices, FX rates, or cash accounts are missing.
- */
+/** Holdings value and optional manual cash, with separate open and realized P/L. */
 
 import React from 'react';
 import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
@@ -32,7 +21,7 @@ export interface PortfolioSummaryCardProps {
   onTogglePnlMode: () => void;
   onToggleCurrency: () => void;
   onOpenChart: () => void;
-  onOpenCashSetup?: () => void;
+  onEditCash?: () => void;
 }
 
 export function PortfolioSummaryCard({
@@ -43,7 +32,7 @@ export function PortfolioSummaryCard({
   onTogglePnlMode,
   onToggleCurrency,
   onOpenChart,
-  onOpenCashSetup,
+  onEditCash,
 }: PortfolioSummaryCardProps) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
@@ -87,6 +76,8 @@ export function PortfolioSummaryCard({
             styles.chartIconButton,
             { backgroundColor: theme.surfaceElevated, borderColor: theme.tintBorder },
           ]}
+          accessibilityRole="button"
+          accessibilityLabel="Portföy grafiğini aç"
           onPress={onOpenChart}
           activeOpacity={0.7}
         >
@@ -114,37 +105,13 @@ export function PortfolioSummaryCard({
 
         <View style={styles.breakdownItem}>
           <Text style={[styles.breakdownLabel, { color: theme.textSecondary }]}>Nakit:</Text>
-          {stats.isCashInitialized ? (
-            <Text style={[styles.breakdownValue, { color: theme.text }]}>
-              {formatPortfolioValue(stats.cashValueTry, currencyMode, usdTryRate)}
+          <TouchableOpacity onPress={onEditCash} activeOpacity={0.7} accessibilityLabel="Nakit tutarını düzenle">
+            <Text style={[styles.breakdownValue, { color: theme.tint }]}>
+              {formatPortfolioValue(stats.cashValueTry, currencyMode, usdTryRate)} · Düzenle
             </Text>
-          ) : (
-            <TouchableOpacity onPress={onOpenCashSetup} activeOpacity={0.7}>
-              <Text style={[styles.setupLinkText, { color: theme.tint }]}>Kurulum Gerekli</Text>
-            </TouchableOpacity>
-          )}
+          </TouchableOpacity>
         </View>
       </View>
-
-      {/* Cash Account Setup CTA Banner for Uninitialized Portfolios */}
-      {!stats.isCashInitialized && onOpenCashSetup && (
-        <TouchableOpacity
-          style={[
-            styles.setupCtaBanner,
-            { backgroundColor: theme.surfaceElevated, borderColor: theme.tintBorder },
-          ]}
-          onPress={onOpenCashSetup}
-          activeOpacity={0.7}
-        >
-          <View style={styles.setupCtaLeft}>
-            <IconSymbol size={16} name="banknote" color={theme.tint} />
-            <Text style={[styles.setupCtaText, { color: theme.text }]}>
-              Nakit Bakiyenizi Kurun
-            </Text>
-          </View>
-          <IconSymbol size={12} name="chevron.right" color={theme.tint} />
-        </TouchableOpacity>
-      )}
 
       {/* Interactive PnL Box: Default Daily PnL, Tapping toggles Total PnL */}
       <TouchableOpacity
@@ -157,7 +124,7 @@ export function PortfolioSummaryCard({
       >
         <View style={styles.pnlBoxLeft}>
           <Text style={[styles.pnlBoxLabel, { color: theme.textSecondary }]}>
-            {isDaily ? 'Günlük Değişim' : 'Toplam Kâr / Zarar'}
+            {isDaily ? 'Günlük Değişim' : 'Açık Pozisyon Kâr / Zarar'}
           </Text>
           <Text
             style={[
@@ -194,11 +161,16 @@ export function PortfolioSummaryCard({
 
           <View style={[styles.pnlModePill, { backgroundColor: theme.surfaceHighlight }]}>
             <Text style={[styles.pnlModePillText, { color: theme.tint }]}>
-              {isDaily ? 'Bugün' : 'Tüm Zamanlar'}
+              {isDaily ? 'Bugün' : 'Açık Pozisyonlar'}
             </Text>
           </View>
         </View>
       </TouchableOpacity>
+
+      <View style={styles.breakdownRow}>
+        <Text style={[styles.breakdownLabel, { color: theme.textSecondary }]}>Satışlardan Kâr / Zarar:</Text>
+        <Text style={[styles.breakdownValue, { color: theme.text }]}>{formatPortfolioValue(stats.totalRealizedPnlTry, currencyMode, usdTryRate)}</Text>
+      </View>
 
       {/* Valuation Warning Notification */}
       {stats.valuationWarning && (
@@ -281,30 +253,6 @@ const styles = StyleSheet.create({
     width: 1,
     height: 12,
     backgroundColor: 'rgba(150, 150, 150, 0.3)',
-  },
-  setupLinkText: {
-    fontSize: 12,
-    fontWeight: '700',
-    textDecorationLine: 'underline',
-  },
-  setupCtaBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    marginVertical: 6,
-  },
-  setupCtaLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  setupCtaText: {
-    fontSize: 12,
-    fontWeight: '700',
   },
   pnlInteractiveBox: {
     flexDirection: 'row',

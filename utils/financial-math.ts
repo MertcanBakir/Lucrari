@@ -1,22 +1,12 @@
-/**
- * Lucrari — Pure Financial Calculation & Valuation Selectors
- * 
- * Provides centralized, strongly typed calculation utilities for
- * portfolio valuation, currency conversion, position return metrics, and allocations.
- * 
- * STRICT PRODUCT RULES:
- * - Total Portfolio Value = Market Value of Positions + Available Cash.
- * - Margin/credit is NOT supported; cash is non-negative at the domain and DB level.
- * - Live USD/TRY rate is required to aggregate USD positions and USD cash into TRY.
- * - Missing prices or missing FX rates result in partial valuations (never fabricated).
- * - Realized PnL is NOT added a second time to total portfolio value (sell proceeds are in cash).
- * - Total Cost Basis does NOT include cash.
+/** Holdings valuation at current prices and FX, with optional manual cash.
+ * Cash does not change on trades. Realized P/L is reported separately from wealth.
  */
 
 import { formatCurrency, formatPercentage } from '@/utils/financial-formatters';
 import type {
   PortfolioPosition,
-  PortfolioCashState,
+  PortfolioCash,
+  PortfolioRealizedPnl,
   CurrencyCode,
 } from '@/types/database';
 import type { FxRateInfo } from '@/services/portfolio/fx-rate-service';
@@ -281,11 +271,10 @@ export interface PortfolioStats {
   knownPositionsMarketValueTry: number;
 
   // 2. Cash Values
-  cashValueTry: number | null; // null if uninitialized or if USD cash exists and rate is missing
+  cashValueTry: number | null; // null if USD cash exists and rate is missing
   knownCashValueTry: number;
   cashTry: number | null;
   cashUsd: number | null;
-  isCashInitialized: boolean;
 
   // 3. Total Portfolio Value = Positions Market Value + Available Cash
   totalPortfolioValueTry: number | null; // null if partial valuation
@@ -297,7 +286,7 @@ export interface PortfolioStats {
   totalPnlPct: number | null;
   dailyPnlTry: number | null;
   dailyPnlPct: number | null;
-  totalRealizedPnlTry: number | null; // From closed FIFO lots (NOT added a second time to total portfolio value)
+  totalRealizedPnlTry: number | null; // Includes sold-out instruments; never added to wealth.
 
   // 5. Valuation Completeness & Diagnostics
   isValuationComplete: boolean;
@@ -320,18 +309,12 @@ export interface PortfolioStats {
   };
 }
 
-/**
- * Calculates complete aggregate portfolio metrics, strictly enforcing:
- * - Total Portfolio Value = Positions Market Value + Available Cash
- * - BUY decreases cash; SELL increases cash
- * - No negative cash
- * - Realized PnL is not double-counted in total portfolio value
- * - Partial valuation handling when prices, FX rate, or cash accounts are missing
- */
+/** Portfolio valuation with moving average cost and optional manual cash. */
 export function calculatePortfolioStats(
   positions: PortfolioPosition[],
-  cashState: PortfolioCashState | null,
-  fxRateInfo: FxRateInfo | null
+  cash: PortfolioCash | null,
+  fxRateInfo: FxRateInfo | null,
+  realizedPnl: PortfolioRealizedPnl | null = null
 ): PortfolioStats {
   const fxRate = fxRateInfo?.rate ?? null;
   const isFxRateAvailable = Boolean(fxRateInfo?.isAvailable && fxRate !== null && fxRate > 0);
@@ -369,7 +352,6 @@ export function calculatePortfolioStats(
     const quantity = Number(p.quantity) || 0;
     const avgCost = Number(p.average_cost) || 0;
     const remainingCost = Number(p.remaining_cost_basis) || (quantity * avgCost);
-    const realizedPnl = Number(p.realized_pnl) || 0;
 
     // Determine FX multiplier for this position
     const rateMultiplier = isUsd ? fxRate : 1;
@@ -377,7 +359,6 @@ export function calculatePortfolioStats(
     if (rateMultiplier !== null) {
       const posCostTry = remainingCost * rateMultiplier;
       totalCostTry += posCostTry;
-      totalRealizedPnlTry += realizedPnl * rateMultiplier;
 
       if (hasPrice && numLatest !== null) {
         const posValueNative = quantity * numLatest;
@@ -398,17 +379,11 @@ export function calculatePortfolioStats(
     }
   }
 
-  // Cash parsing & state detection - exclusively PortfolioCashState
-  const isCashInitialized = Boolean(cashState?.isInitialized);
-  let rawCashTry: number | null = null;
-  let rawCashUsd: number | null = null;
-
-  if (isCashInitialized && cashState?.balances) {
-    const tryItem = cashState.balances.find((b) => b.currency === 'TRY');
-    const usdItem = cashState.balances.find((b) => b.currency === 'USD');
-    rawCashTry = tryItem?.currentBalance != null ? Number(tryItem.currentBalance) : null;
-    rawCashUsd = usdItem?.currentBalance != null ? Number(usdItem.currentBalance) : null;
-  }
+  const rawCashTry = cash?.tryBalance ?? 0;
+  const rawCashUsd = cash?.usdBalance ?? 0;
+  const realizedTry = realizedPnl?.tryPnl ?? 0;
+  const realizedUsd = realizedPnl?.usdPnl ?? 0;
+  totalRealizedPnlTry = realizedTry + realizedUsd * (fxRate ?? 0);
 
   if (rawCashUsd != null && rawCashUsd > 0) {
     hasUsdExposure = true;
@@ -418,7 +393,7 @@ export function calculatePortfolioStats(
   let cashValueTry: number | null = null;
   let knownCashValueTry = 0;
 
-  if (isCashInitialized && rawCashTry !== null && rawCashUsd !== null) {
+  if (rawCashTry !== null && rawCashUsd !== null) {
     knownCashValueTry += rawCashTry;
     if (rawCashUsd === 0) {
       cashValueTry = rawCashTry;
@@ -437,13 +412,10 @@ export function calculatePortfolioStats(
     missingPriceCount === 0 && (!positions.some((p) => p.currency === 'USD') || isFxRateAvailable);
   const isValuationComplete =
     isPositionsValuationComplete &&
-    isCashInitialized &&
     (cashValueTry !== null || (rawCashUsd ?? 0) === 0);
 
   let valuationWarning: string | null = null;
-  if (!isCashInitialized) {
-    valuationWarning = 'Nakit bakiyesi kurulumu gerekli; portföy toplamı henüz nakit tutarını içermiyor.';
-  } else if (missingPriceCount > 0) {
+  if (missingPriceCount > 0) {
     valuationWarning = `${missingPriceCount} varlığın piyasa fiyatı henüz alınamadı, portföy toplamı kısmi gösteriliyor.`;
   } else if (hasMissingUsdRate) {
     valuationWarning = 'Canlı USD/TRY kuru alınamadı, USD varlıkların TRY toplamı eksik olabilir.';
@@ -476,7 +448,6 @@ export function calculatePortfolioStats(
     knownCashValueTry,
     cashTry: rawCashTry,
     cashUsd: rawCashUsd,
-    isCashInitialized,
     totalPortfolioValueTry,
     knownPortfolioValueTry,
     totalCostTry,
@@ -484,7 +455,7 @@ export function calculatePortfolioStats(
     totalPnlPct,
     dailyPnlTry,
     dailyPnlPct,
-    totalRealizedPnlTry,
+    totalRealizedPnlTry: realizedUsd !== 0 && !isFxRateAvailable ? null : totalRealizedPnlTry,
     isValuationComplete,
     missingPriceCount,
     stalePriceCount,
@@ -500,17 +471,14 @@ export function calculatePortfolioStats(
       TEFAS: tefasValueTry,
       NASDAQ: nasdaqValueTry,
       FX: fxValueTry,
-      CASH: isCashInitialized ? (cashValueTry ?? (rawCashTry ?? 0)) : 0,
+      CASH: cashValueTry ?? rawCashTry,
     },
   };
 }
 
-/**
- * Computes asset allocation items for visual representation.
- * Cash is rendered as an allocation slice only when cash accounts are initialized and cash > 0.
- */
+/** Portfolio valuation with moving average cost and optional manual cash. */
 export function calculateAllocationItems(stats: PortfolioStats): AllocationItem[] {
-  const cashTry = stats.isCashInitialized ? (stats.cashValueTry ?? (stats.cashTry ?? 0)) : 0;
+  const cashTry = stats.cashValueTry ?? (stats.cashTry ?? 0);
 
   const totalPositiveAssets =
     stats.categoryValues.BIST +

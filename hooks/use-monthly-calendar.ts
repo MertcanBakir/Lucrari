@@ -71,7 +71,10 @@ export function useMonthlyCalendar(year: number, month: number): UseMonthlyCalen
     abortControllerRef.current = controller;
 
     const targetMonthKey = `${year}-${month}`;
-    log.debug(`Ay seçildi (${year}-${String(month + 1).padStart(2, '0')})`);
+    log.debug('calendar.month.selected', {
+      message: 'Calendar month selected.',
+      context: { year, month }
+    });
 
     setRawState((prev) => ({
       ...prev,
@@ -106,17 +109,18 @@ export function useMonthlyCalendar(year: number, month: number): UseMonthlyCalen
           error: null,
         });
       } else {
-        log.warn('Geciken ay takvim cevabı ay uyuşmazlığı nedeniyle reddedildi', {
-          targetMonthKey,
-          currentMonthKey: currentMonthKeyRef.current,
-          resultYear: result.year,
-          resultMonth: result.month,
+        log.warn('calendar.response.discarded', {
+          message: 'Calendar response discarded.',
+          context: { targetMonthKey, currentMonthKey: currentMonthKeyRef.current, resultYear: result.year, resultMonth: result.month }
         });
       }
     } catch (err: unknown) {
       if (!controller.signal.aborted && currentMonthKeyRef.current === targetMonthKey) {
         const errorMsg = err instanceof Error ? err.message : 'Takvim verileri yüklenemedi';
-        log.warn('Error in useMonthlyCalendar hook', errorMsg);
+        log.warn('calendar.load.failed', {
+          message: 'Calendar load failed.',
+          error: err
+        });
         setRawState((prev) => ({
           ...prev,
           monthKey: targetMonthKey,

@@ -27,7 +27,7 @@ export const PortfolioActivityEmptyView = memo(function PortfolioActivityEmptyVi
 
   const description = isFiltered
     ? 'Filtreyi veya arama metnini değiştirerek tekrar deneyebilirsiniz.'
-    : 'Alış, satış veya nakit işlemi eklediğinizde burada görüntülenecek.';
+    : 'Alış veya satış işlemi eklediğinizde burada görüntülenecek.';
 
   return (
     <View style={styles.container}>

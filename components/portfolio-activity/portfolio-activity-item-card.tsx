@@ -1,7 +1,7 @@
 /**
  * Lucrari — Portfolio Activity Item Card
  * 
- * Renders an individual transaction or cash flow activity row with
+ * Renders an individual transaction activity row with
  * rich semantic formatting, market tag, reversal state, and accessibility support.
  */
 
@@ -34,7 +34,6 @@ export const PortfolioActivityItemCard = memo(function PortfolioActivityItemCard
   const theme = Colors[isDark ? 'dark' : 'light'];
 
   const typeMeta = getActivityTypeMeta(item.activityType);
-  const isTransaction = item.sourceKind === 'TRANSACTION';
   const isReversed = item.isReversed;
 
   const handlePress = useCallback(async () => {
@@ -51,23 +50,17 @@ export const PortfolioActivityItemCard = memo(function PortfolioActivityItemCard
   // Color semantics based on activity type and reversal state
   let badgeColor = theme.tint;
   let badgeBg = isDark ? 'rgba(78, 205, 196, 0.15)' : 'rgba(10, 126, 164, 0.1)';
-  let amountPrefix = '';
 
   if (isReversed) {
     badgeColor = theme.textMuted;
     badgeBg = theme.surfaceHighlight;
-  } else if (item.activityType === 'BUY' || item.activityType === 'DEPOSIT') {
+  } else if (item.activityType === 'BUY') {
     badgeColor = isDark ? '#4ECDC4' : '#0A7EA4';
     badgeBg = isDark ? 'rgba(78, 205, 196, 0.15)' : 'rgba(10, 126, 164, 0.1)';
-    amountPrefix = '+';
   } else if (item.activityType === 'SELL') {
     badgeColor = isDark ? '#9BA1A6' : '#687076';
     badgeBg = theme.surfaceHighlight;
-    amountPrefix = '';
-  } else if (item.activityType === 'WITHDRAWAL') {
-    badgeColor = isDark ? '#FF6B6B' : '#DC3545';
-    badgeBg = isDark ? 'rgba(255, 107, 107, 0.15)' : 'rgba(220, 53, 69, 0.1)';
-    amountPrefix = '-';
+
   }
 
   const timeStr = formatActivityTime(item.occurredAt);
@@ -86,7 +79,7 @@ export const PortfolioActivityItemCard = memo(function PortfolioActivityItemCard
       ]}
       onPress={handlePress}
       accessibilityRole="button"
-      accessibilityLabel={`${typeMeta.label}, ${isTransaction ? item.symbol : formattedGross}, ${timeStr}${isReversed ? ', Geri Alındı' : ''}`}
+      accessibilityLabel={`${typeMeta.label}, ${item.symbol}, ${timeStr}${isReversed ? ', Geri Alındı' : ''}`}
       accessibilityHint="Detayları görüntülemek için dokunun"
     >
       <View style={styles.cardHeader}>
@@ -130,13 +123,13 @@ export const PortfolioActivityItemCard = memo(function PortfolioActivityItemCard
               },
             ]}
           >
-            {item.activityType === 'WITHDRAWAL' ? amountPrefix : ''}{formattedGross}
+            {formattedGross}
           </Text>
         </View>
       </View>
 
       {/* Detail Body */}
-      {isTransaction ? (
+
         <View style={styles.transactionBody}>
           <View style={styles.symbolRow}>
             <Text style={[styles.symbolText, { color: theme.text }]} numberOfLines={1}>
@@ -162,19 +155,7 @@ export const PortfolioActivityItemCard = memo(function PortfolioActivityItemCard
             </Text>
           </View>
         </View>
-      ) : (
-        <View style={styles.cashFlowBody}>
-          {item.notes ? (
-            <Text style={[styles.notesText, { color: theme.textSecondary }]} numberOfLines={2}>
-              {item.notes}
-            </Text>
-          ) : (
-            <Text style={[styles.notesText, { color: theme.textMuted }]}>
-              {item.currency} serbest nakit hareketi
-            </Text>
-          )}
-        </View>
-      )}
+
     </Pressable>
   );
 });
@@ -286,13 +267,5 @@ const styles = StyleSheet.create({
   financialsText: {
     fontSize: 12,
     fontWeight: '500',
-  },
-  cashFlowBody: {
-    marginTop: 6,
-  },
-  notesText: {
-    fontSize: 12,
-    fontWeight: '400',
-    fontStyle: 'italic',
   },
 });

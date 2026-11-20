@@ -57,7 +57,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (result.error) {
         setError(result.error);
-        log.warn('Auth bootstrap tamamlanamadı', { error: result.error });
+        log.warn('auth.bootstrap.failed', {
+          message: 'Auth bootstrap failed.',
+          error: result.error
+        });
       } else {
         setSession(result.session);
         setUser(result.user);
@@ -68,7 +71,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!isMountedRef.current) return;
       const sanitized = sanitizeAuthError(err);
       setError(sanitized);
-      log.error('Beklenmeyen auth bootstrap hatası', { error: sanitized });
+      log.error('auth.bootstrap.exception', {
+        message: 'Auth bootstrap exception.',
+        error: sanitized
+      });
     } finally {
       if (isMountedRef.current) {
         setIsLoading(false);
@@ -87,7 +93,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { unsubscribe } = onAuthStateChange((event, newSession) => {
       if (!isMountedRef.current) return;
 
-      log.debug('Auth state güncellendi', { event, hasSession: Boolean(newSession) });
+      log.debug('auth.state.changed', {
+        message: 'Auth state changed.',
+        context: { event, hasSession: Boolean(newSession) }
+      });
       setSession(newSession);
       setUser(newSession?.user ?? null);
       if (newSession) {
@@ -117,7 +126,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [bootstrapAuth]);
 
   const retryAuth = useCallback(async () => {
-    log.info('Kullanıcı / sistem tarafından auth retry tetiklendi');
+    log.info('auth.retry.started', {
+      message: 'Auth retry started.'
+    });
     await bootstrapAuth(false);
   }, [bootstrapAuth]);
 
@@ -127,14 +138,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setError(null);
 
     try {
-      log.info('Yatırımları sıfırlama işlemi başlatıldı (reset_my_investments)...', { clientRequestId });
+      log.info('portfolio.reset.started', {
+        message: 'Portfolio reset started.',
+        context: { clientRequestId }
+      });
       await resetMyInvestments({ clientRequestId });
-      log.info('Yatırımlar başarıyla sıfırlandı.');
+      log.info('portfolio.reset.completed', {
+        message: 'Portfolio reset completed.'
+      });
     } catch (err) {
       if (!isMountedRef.current) return;
       const sanitized = sanitizeAuthError(err);
       setError(sanitized);
-      log.error('Hesap sıfırlama sırasında hata', { error: sanitized });
+      log.error('portfolio.reset.failed', {
+        message: 'Portfolio reset failed.',
+        error: sanitized
+      });
       throw err;
     } finally {
       if (isMountedRef.current) {

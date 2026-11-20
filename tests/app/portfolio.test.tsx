@@ -5,11 +5,12 @@ import { useAuth } from '@/context/auth-context';
 import { usePortfolio } from '@/hooks/use-portfolio';
 import { usePortfolioActivity } from '@/hooks/use-portfolio-activity';
 import { calculatePortfolioStats } from '@/utils/financial-math';
-import { activity, date, position } from '../ui/fixtures';
+import { activity, position } from '../ui/fixtures';
 
+const mockChartPush = jest.fn();
 let mockFocus: (() => void) | undefined;
 jest.mock('expo-router', () => ({
-  useRouter: () => ({ back: jest.fn(), push: jest.fn() }),
+  useRouter: () => ({ back: jest.fn(), push: mockChartPush }),
   useFocusEffect: (callback: () => void) => { mockFocus = callback; },
 }));
 jest.mock('@/context/auth-context', () => ({ useAuth: jest.fn() }));
@@ -20,17 +21,16 @@ jest.mock('@/services/portfolio/instrument-service', () => ({
 }));
 
 const positions = [position];
-const cashState = { portfolioId: 'p1', isInitialized: true,
-  balances: [{ currency: 'TRY' as const, openingBalance: 5000, currentBalance: 5000, initializedAt: date }] };
+const cash = { tryBalance: 5000, usdBalance: 0 };
 function makePortfolio() {
   return {
     portfolio: { id: 'p1', name: 'Ana Portföy' } as NonNullable<ReturnType<typeof usePortfolio>['portfolio']>,
-    positions, stats: calculatePortfolioStats(positions, cashState, null), allocationItems: [],
-    usdTryRate: 30, isCashInitialized: true, availableCashTry: 5000, availableCashUsd: 0,
+    positions, stats: calculatePortfolioStats(positions, cash, null), allocationItems: [],
+    usdTryRate: 30,
     isLoading: false, isRefreshing: false, isStale: false, error: null,
-    lastFetchedTimestamp: 1, refreshPortfolio: jest.fn().mockResolvedValue(undefined), initializeCashAccounts: jest.fn(),
-    addTransaction: jest.fn().mockResolvedValue(undefined), addCashFlow: jest.fn().mockResolvedValue(undefined),
-    cashState, fxRateInfo: null, reverseTransaction: jest.fn(), reverseCashFlow: jest.fn(), resetInvestments: jest.fn(),
+    lastFetchedTimestamp: 1, refreshPortfolio: jest.fn().mockResolvedValue(undefined), updateCash: jest.fn().mockResolvedValue(undefined),
+    addTransaction: jest.fn().mockResolvedValue(undefined),
+    cash, fxRateInfo: null, reverseTransaction: jest.fn(), resetInvestments: jest.fn(),
   } satisfies ReturnType<typeof usePortfolio>;
 }
 function makeActivity() {
@@ -76,10 +76,10 @@ it('filters holdings, changes display currency, and submits a trade from holding
   await act(async () => fireEvent.press(screen.getByText('₺ TRY')));
   expect(await screen.findByText('$ USD')).toBeOnTheScreen();
   fireEvent.press(screen.getByText('Günlük Değişim'));
-  expect(await screen.findByText('Toplam Kâr / Zarar')).toBeOnTheScreen();
+  expect(await screen.findByText('Açık Pozisyon Kâr / Zarar')).toBeOnTheScreen();
   fireEvent.press(await screen.findByText('THYAO'));
   fireEvent.press(await screen.findByText('- Satış Yap'));
-  fireEvent.changeText(await screen.findByPlaceholderText('0'), '2');
+  fireEvent.changeText(await screen.findByLabelText('Adet'), '2');
   fireEvent.press(await screen.findByText(/Satış İşlemini Kaydet/));
   await waitFor(() => expect(state.addTransaction).toHaveBeenCalledWith(expect.objectContaining({
     instrumentId: position.instrument_id, transactionType: 'SELL', quantity: 2,
@@ -101,15 +101,15 @@ it('closes the previous account detail when the next account cannot load', async
   expect(screen.queryByText('Ortalama Maliyet')).toBeNull();
 });
 
-it('opens the general transaction form and delegates cash deposits', async () => {
+it('opens the optional cash editor and saves manual balances', async () => {
   const state = makePortfolio();
   jest.mocked(usePortfolio).mockReturnValue(state);
   render(<InvestmentsScreen />);
-  fireEvent.press(screen.getByText('İşlem Ekle'));
-  fireEvent.press(await screen.findByText('Yatır'));
-  fireEvent.changeText(await screen.findByPlaceholderText('0'), '23');
-  fireEvent.press(await screen.findByText(/TRY Yatırma İşlemini Kaydet/));
-  await waitFor(() => expect(state.addCashFlow).toHaveBeenCalledWith(expect.objectContaining({ flowType: 'DEPOSIT', amount: 23 })));
+  fireEvent.press(screen.getByLabelText('Nakit tutarını düzenle'));
+  const inputs = await screen.findAllByPlaceholderText('0');
+  fireEvent.changeText(inputs[0], '23');
+  fireEvent.press(screen.getByText('Bakiyeleri Kaydet'));
+  await waitFor(() => expect(state.updateCash).toHaveBeenCalledWith(23, 0));
 });
 
 it('chooses the proper action for each activity load failure and presents item details', async () => {
@@ -135,4 +135,11 @@ it('chooses the proper action for each activity load failure and presents item d
   expect(await screen.findByText('İlk alım')).toBeOnTheScreen();
   fireEvent.press(screen.getByLabelText('Tamam'));
   await waitFor(() => expect(screen.queryByText('İlk alım')).toBeNull());
+});
+
+it('opens the portfolio chart from the summary icon with the selected currency', () => {
+  jest.mocked(usePortfolio).mockReturnValue(makePortfolio());
+  render(<InvestmentsScreen />);
+  fireEvent.press(screen.getByLabelText('Portföy grafiğini aç'));
+  expect(mockChartPush).toHaveBeenCalledWith({ pathname: '/portfolio-chart', params: { currency: 'TRY', market: 'ALL' } });
 });

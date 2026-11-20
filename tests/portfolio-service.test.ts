@@ -1,44 +1,25 @@
-/**
- * Unit & Mock Service Tests for Lucrari Portfolio Service & RPCs
- * 
- * NOTE: These tests run in Node.js and mock the Supabase client.
- * The real PostgreSQL database acceptance test suite is located at:
- * `supabase/tests/portfolio_cash_account_model_test.sql`.
- * 
- * Verifies:
- * - RFC4122 v4 UUID generator format
- * - Portfolio provisioning & in-flight deduplication
- * - ensureDefaultPortfolio SELECT error handling (NO INSERT on query failure)
- * - ensureDefaultPortfolio 23505 race recovery ensuring default portfolio is selected
- * - Positions RPC integration: exactly 1 RPC call, 0 table queries, change metrics preserved
- * - Cash State RPC integration and absence of get_portfolio_cash_balances calls
- * - Idempotent BUY / SELL transaction caller retry after transport failure (equal ID & timestamp)
- * - Idempotent DEPOSIT / WITHDRAWAL cash flow caller retry after transport failure (equal ID & timestamp)
- * - Reset RPC caller retry after transport failure and fresh intent ID rotation
- * - Absence of unsafe client-side table delete fallbacks on reset failure
- * - Reversal RPC integrations
- * - In-flight query deduplication & generation-safe cleanup
- */
+/** Portfolio calculations, validation and request behavior for the simplified model. */
 
 import { describe, it } from '@jest/globals';
 import assert from 'node:assert/strict';
 import { generateUUID } from '../utils/uuid';
 import { createResetIntent } from '../utils/mutation-intent';
 import {
-  archiveAllUserPortfolios,
   ensureDefaultPortfolio,
   fetchPortfolioPositions,
-  fetchPortfolioCashState,
   fetchPortfolioDataCombined,
-  initializePortfolioCashAccounts,
+  fetchPortfolioCash,
+  fetchRealizedPnl,
+  setPortfolioCash,
   recordTransaction,
-  recordCashFlow,
   reverseTransaction,
   resetMyInvestments,
   subscribePortfolioChanges,
   notifyPortfolioChanged,
 } from '../services/portfolio/portfolio-service';
 import { getSupabaseClient } from '../services/supabase/client';
+
+jest.mock('@/services/portfolio/fx-rate-service', () => ({ fetchUsdTryRate: jest.fn().mockResolvedValue({ rate: 30, isAvailable: true, isStale: false, rateAt: null }) }));
 
 describe('Portfolio Service & RPC Integration (Mock Unit Tests)', () => {
   const mockPortfolioId = '11111111-1111-4111-8111-111111111111';
@@ -322,155 +303,6 @@ describe('Portfolio Service & RPC Integration (Mock Unit Tests)', () => {
     }
   });
 
-  it('fetchPortfolioCashState should call get_portfolio_cash_state RPC', async () => {
-    const client = getSupabaseClient();
-    const mockCashState = {
-      portfolio_id: mockPortfolioId,
-      is_initialized: true,
-      balances: [
-        { currency: 'TRY', opening_balance: 10000, current_balance: 8500, initialized_at: '2026-08-26T10:00:00Z' },
-        { currency: 'USD', opening_balance: 500, current_balance: 500, initialized_at: '2026-08-26T10:00:00Z' },
-      ],
-    };
-
-    const originalRpc = client.rpc;
-    (client as any).rpc = (fnName: string, args: Record<string, unknown>) => {
-      if (fnName === 'get_portfolio_cash_state') {
-        assert.strictEqual(args.p_portfolio_id, mockPortfolioId);
-        return Promise.resolve({ data: mockCashState, error: null });
-      }
-      return (originalRpc as any).call(client, fnName, args);
-    };
-
-    try {
-      const state = await fetchPortfolioCashState(mockPortfolioId);
-      assert.strictEqual(state.isInitialized, true);
-      assert.strictEqual(state.balances.length, 2);
-      assert.strictEqual(state.balances[0].currency, 'TRY');
-      assert.strictEqual(state.balances[0].currentBalance, 8500);
-      assert.strictEqual(state.balances[1].currency, 'USD');
-      assert.strictEqual(state.balances[1].currentBalance, 500);
-    } finally {
-      client.rpc = originalRpc;
-    }
-  });
-
-  it('fetchPortfolioDataCombined should call get_portfolio_cash_state and NEVER call get_portfolio_cash_balances', async () => {
-    const client = getSupabaseClient();
-    let cashStateCalls = 0;
-    let cashBalancesCalls = 0;
-
-    const originalRpc = client.rpc;
-    const originalFrom = client.from;
-
-    (client as any).rpc = (fnName: string, args: Record<string, unknown>) => {
-      if (fnName === 'get_portfolio_positions') {
-        return Promise.resolve({ data: [], error: null });
-      }
-      if (fnName === 'get_portfolio_cash_state') {
-        cashStateCalls++;
-        return Promise.resolve({
-          data: {
-            portfolio_id: mockPortfolioId,
-            is_initialized: true,
-            balances: [
-              { currency: 'TRY', opening_balance: 5000, current_balance: 5000, initialized_at: '2026-08-26' },
-            ],
-          },
-          error: null,
-        });
-      }
-      if (fnName === 'get_portfolio_cash_balances') {
-        cashBalancesCalls++;
-        return Promise.resolve({ data: [], error: null });
-      }
-      return (originalRpc as any).call(client, fnName, args);
-    };
-
-    (client as any).from = (table: string) => {
-      if (table === 'instruments') {
-        return {
-          select: () => ({
-            eq: () => ({
-              eq: () => ({
-                eq: () => ({
-                  maybeSingle: async () => ({
-                    data: {
-                      id: 'usdtry-id',
-                      symbol: 'USDTRY',
-                      market: 'FX',
-                      instrument_latest_prices: { price: 35.0, is_stale: false },
-                    },
-                    error: null,
-                  }),
-                }),
-              }),
-            }),
-          }),
-        };
-      }
-      return (originalFrom as any).call(client, table);
-    };
-
-    try {
-      const result = await fetchPortfolioDataCombined(mockPortfolioId);
-      assert.strictEqual(cashStateCalls, 1, 'get_portfolio_cash_state must be called exactly once');
-      assert.strictEqual(cashBalancesCalls, 0, 'get_portfolio_cash_balances must NEVER be called');
-      assert.strictEqual(result.cashState.isInitialized, true);
-      assert.strictEqual(result.cashState.balances[0].currentBalance, 5000);
-    } finally {
-      client.rpc = originalRpc;
-      client.from = originalFrom;
-    }
-  });
-
-  it('initializePortfolioCashAccounts should invoke initialize_portfolio_cash_accounts RPC and notify listeners', async () => {
-    const client = getSupabaseClient();
-    let changeNotified = false;
-    const unsubscribe = subscribePortfolioChanges(() => {
-      changeNotified = true;
-    });
-
-    const originalRpc = client.rpc;
-    (client as any).rpc = (fnName: string, args: Record<string, unknown>) => {
-      if (fnName === 'initialize_portfolio_cash_accounts') {
-        assert.strictEqual(args.p_portfolio_id, mockPortfolioId);
-        assert.strictEqual(args.p_try_opening_balance, 50000);
-        assert.strictEqual(args.p_usd_opening_balance, 1000);
-        assert.ok(args.p_client_request_id);
-
-        return Promise.resolve({
-          data: {
-            portfolio_id: mockPortfolioId,
-            is_initialized: true,
-            balances: [
-              { currency: 'TRY', opening_balance: 50000, current_balance: 50000, initialized_at: '2026-08-26T10:00:00Z' },
-              { currency: 'USD', opening_balance: 1000, current_balance: 1000, initialized_at: '2026-08-26T10:00:00Z' },
-            ],
-            was_replayed: false,
-          },
-          error: null,
-        });
-      }
-      return (originalRpc as any).call(client, fnName, args);
-    };
-
-    try {
-      const result = await initializePortfolioCashAccounts({
-        portfolioId: mockPortfolioId,
-        tryOpeningBalance: 50000,
-        usdOpeningBalance: 1000,
-      });
-
-      assert.strictEqual(result.is_initialized, true);
-      assert.strictEqual(result.balances[0].opening_balance, 50000);
-      assert.strictEqual(changeNotified, true, 'Subscribers must be notified when cash accounts are initialized');
-    } finally {
-      unsubscribe();
-      client.rpc = originalRpc;
-    }
-  });
-
   it('recordTransaction caller retry with same intent after transport failure should preserve clientRequestId and transactionAt', async () => {
     const client = getSupabaseClient();
     const customRequestId = generateUUID();
@@ -559,88 +391,6 @@ describe('Portfolio Service & RPC Integration (Mock Unit Tests)', () => {
     }
   });
 
-  it('recordCashFlow caller retry with same intent after transport failure should preserve clientRequestId and flowAt', async () => {
-    const client = getSupabaseClient();
-    const customRequestId = generateUUID();
-    const customFlowAt = '2026-08-26T11:00:00.000Z';
-    const receivedCalls: { clientRequestId: unknown; flowAt: unknown }[] = [];
-
-    const originalRpc = client.rpc;
-    (client as any).rpc = (fnName: string, args: Record<string, unknown>) => {
-      if (fnName === 'record_cash_flow') {
-        receivedCalls.push({
-          clientRequestId: args.p_client_request_id,
-          flowAt: args.p_flow_at,
-        });
-
-        assert.strictEqual(args.p_portfolio_id, mockPortfolioId);
-        assert.strictEqual(args.p_flow_type, 'DEPOSIT');
-
-        // Call 1: transport failure
-        if (receivedCalls.length === 1) {
-          return Promise.resolve({
-            data: null,
-            error: { message: 'Network request timed out' },
-          });
-        }
-
-        // Call 2: replay success
-        return Promise.resolve({
-          data: {
-            cash_flow_id: 'cf-456',
-            was_replayed: true,
-            cash_balance: '20000',
-            currency: 'USD',
-          },
-          error: null,
-        });
-      }
-      return (originalRpc as any).call(client, fnName, args);
-    };
-
-    try {
-      // First attempt fails
-      await assert.rejects(
-        async () => {
-          await recordCashFlow({
-            portfolioId: mockPortfolioId,
-            flowType: 'DEPOSIT',
-            amount: 20000,
-            currency: 'USD',
-            flowAt: customFlowAt,
-            clientRequestId: customRequestId,
-          });
-        },
-        (err: Error) => {
-          return err.message.includes('Nakit hareketi kaydedilemedi') || err.message.includes('İnternet bağlantısı');
-        }
-      );
-
-      // Caller explicitly retries with identical clientRequestId and timestamp
-      const retryResult = await recordCashFlow({
-        portfolioId: mockPortfolioId,
-        flowType: 'DEPOSIT',
-        amount: 20000,
-        currency: 'USD',
-        flowAt: customFlowAt,
-        clientRequestId: customRequestId,
-      });
-
-      assert.strictEqual(receivedCalls.length, 2);
-      assert.strictEqual(receivedCalls[0].clientRequestId, customRequestId);
-      assert.strictEqual(receivedCalls[1].clientRequestId, customRequestId);
-      assert.strictEqual(receivedCalls[0].clientRequestId, receivedCalls[1].clientRequestId, 'clientRequestId must be identical across retries');
-
-      assert.strictEqual(receivedCalls[0].flowAt, customFlowAt);
-      assert.strictEqual(receivedCalls[1].flowAt, customFlowAt);
-      assert.strictEqual(receivedCalls[0].flowAt, receivedCalls[1].flowAt, 'flowAt must be identical across retries');
-
-      assert.strictEqual(retryResult.was_replayed, true);
-    } finally {
-      client.rpc = originalRpc;
-    }
-  });
-
   it('resetMyInvestments caller retry after transport failure should preserve clientRequestId; new reset intent generates fresh ID', async () => {
     const client = getSupabaseClient();
     const intent1 = createResetIntent(generateUUID);
@@ -669,8 +419,6 @@ describe('Portfolio Service & RPC Integration (Mock Unit Tests)', () => {
             reset_at: new Date().toISOString(),
             portfolio_count: 1,
             deleted_transaction_count: 5,
-            deleted_cash_flow_count: 2,
-            deleted_fifo_match_count: 0,
             deleted_instrument_count: 3,
             deleted_snapshot_count: 1,
             deleted_snapshot_position_count: 2,
@@ -803,151 +551,6 @@ describe('Portfolio Service & RPC Integration (Mock Unit Tests)', () => {
     );
   });
 
-  it('fetchPortfolioDataCombined should deduplicate concurrent in-flight requests', async () => {
-    const client = getSupabaseClient();
-    let rpcCallCount = 0;
-
-    const originalRpc = client.rpc;
-    const originalFrom = client.from;
-
-    (client as any).rpc = (fnName: string, args: Record<string, unknown>) => {
-      if (fnName === 'get_portfolio_positions') {
-        rpcCallCount++;
-        return new Promise((resolve) => {
-          setTimeout(() => {
-            resolve({ data: [], error: null });
-          }, 50);
-        });
-      }
-      if (fnName === 'get_portfolio_cash_state') {
-        return Promise.resolve({
-          data: {
-            portfolio_id: mockPortfolioId,
-            is_initialized: true,
-            balances: [
-              { currency: 'TRY', opening_balance: 10000, current_balance: 10000, initialized_at: '2026-08-26' },
-              { currency: 'USD', opening_balance: 0, current_balance: 0, initialized_at: '2026-08-26' },
-            ],
-          },
-          error: null,
-        });
-      }
-      return (originalRpc as any).call(client, fnName, args);
-    };
-
-    (client as any).from = (table: string) => {
-      if (table === 'instruments') {
-        return {
-          select: () => ({
-            eq: () => ({
-              eq: () => ({
-                eq: () => ({
-                  maybeSingle: async () => ({
-                    data: {
-                      id: 'usdtry-id',
-                      symbol: 'USDTRY',
-                      market: 'FX',
-                      instrument_latest_prices: {
-                        price: 35.0,
-                        is_stale: false,
-                      },
-                    },
-                    error: null,
-                  }),
-                }),
-              }),
-            }),
-          }),
-        };
-      }
-      return (originalFrom as any).call(client, table);
-    };
-
-    try {
-      // Launch 3 concurrent fetches for the same portfolioId
-      const [res1, res2, res3] = await Promise.all([
-        fetchPortfolioDataCombined(mockPortfolioId),
-        fetchPortfolioDataCombined(mockPortfolioId),
-        fetchPortfolioDataCombined(mockPortfolioId),
-      ]);
-
-      assert.strictEqual(rpcCallCount, 1, 'RPC get_portfolio_positions must only be invoked once for 3 concurrent fetches');
-      assert.strictEqual(res1.fxRateInfo.rate, 35.0);
-      assert.strictEqual(res1.cashState.isInitialized, true);
-      assert.deepStrictEqual(res1, res2);
-      assert.deepStrictEqual(res2, res3);
-    } finally {
-      client.rpc = originalRpc;
-      client.from = originalFrom;
-    }
-  });
-
-  it('fetchPortfolioDataCombined should clean up on failure and allow retry', async () => {
-    const client = getSupabaseClient();
-    let rpcCallCount = 0;
-
-    const originalRpc = client.rpc;
-    const originalFrom = client.from;
-
-    (client as any).rpc = (fnName: string, args: Record<string, unknown>) => {
-      if (fnName === 'get_portfolio_positions') {
-        rpcCallCount++;
-        if (rpcCallCount === 1) {
-          return Promise.resolve({ data: null, error: { message: 'Database connection dropped' } });
-        }
-        return Promise.resolve({ data: [], error: null });
-      }
-      if (fnName === 'get_portfolio_cash_state') {
-        return Promise.resolve({
-          data: { portfolio_id: mockPortfolioId, is_initialized: true, balances: [] },
-          error: null,
-        });
-      }
-      return (originalRpc as any).call(client, fnName, args);
-    };
-
-    (client as any).from = (table: string) => {
-      if (table === 'instruments') {
-        return {
-          select: () => ({
-            eq: () => ({
-              eq: () => ({
-                eq: () => ({
-                  maybeSingle: async () => ({
-                    data: {
-                      id: 'usdtry-id',
-                      symbol: 'USDTRY',
-                      market: 'FX',
-                      instrument_latest_prices: { price: 35.0, is_stale: false },
-                    },
-                    error: null,
-                  }),
-                }),
-              }),
-            }),
-          }),
-        };
-      }
-      return (originalFrom as any).call(client, table);
-    };
-
-    try {
-      // First attempt throws error
-      await assert.rejects(async () => {
-        await fetchPortfolioDataCombined(mockPortfolioId);
-      });
-      assert.strictEqual(rpcCallCount, 1);
-
-      // Retry should succeed and invoke RPC again
-      const retryResult = await fetchPortfolioDataCombined(mockPortfolioId);
-      assert.strictEqual(rpcCallCount, 2);
-      assert.ok(retryResult);
-    } finally {
-      client.rpc = originalRpc;
-      client.from = originalFrom;
-    }
-  });
-
   it('subscribePortfolioChanges should notify subscribers on mutations', () => {
     let notified = false;
     const unsubscribe = subscribePortfolioChanges(() => {
@@ -964,84 +567,78 @@ describe('Portfolio Service & RPC Integration (Mock Unit Tests)', () => {
   });
 });
 
-it('maps nullable cash balances and never substitutes a numeric zero', async () => {
+it('reads and edits manual cash, and includes closed sale profit in the combined request', async () => {
   const client = getSupabaseClient();
-  const rpc = jest.spyOn(client, 'rpc');
+  const rpc = jest.spyOn(client, 'rpc').mockImplementation(((name: string) => {
+    const data = name === 'get_portfolio_cash' ? { try_balance: 100, usd_balance: 5 }
+      : name === 'get_portfolio_realized_pnl' ? { try_pnl: 1200, usd_pnl: 10 } : [];
+    return Promise.resolve({ data, error: null });
+  }) as any);
   try {
-    rpc.mockImplementationOnce(() => Promise.resolve({
-      data: { portfolio_id: null, balances: [
-        { currency: 'TRY', opening_balance: '500.5', current_balance: null, initialized_at: null },
-        { currency: 'USD', opening_balance: null, current_balance: '0', initialized_at: null },
-      ] },
-      error: null,
-    }) as unknown as ReturnType<typeof client.rpc>);
-    rpc.mockImplementationOnce(() => Promise.resolve({ data: null, error: null }) as unknown as ReturnType<typeof client.rpc>);
-    await expect(fetchPortfolioCashState('portfolio')).resolves.toEqual({
-      portfolioId: 'portfolio', isInitialized: false, balances: [
-        { currency: 'TRY', openingBalance: 500.5, currentBalance: null, initializedAt: null },
-        { currency: 'USD', openingBalance: null, currentBalance: 0, initializedAt: null },
-      ],
-    });
-    await expect(fetchPortfolioCashState('portfolio')).resolves.toEqual({ portfolioId: 'portfolio', isInitialized: false, balances: [] });
-  } finally {
-    rpc.mockRestore();
-  }
+    expect(await fetchPortfolioCash('portfolio-test')).toEqual({ tryBalance: 100, usdBalance: 5 });
+    expect(await fetchRealizedPnl('portfolio-test')).toEqual({ tryPnl: 1200, usdPnl: 10 });
+    await setPortfolioCash({ portfolioId: 'portfolio-test', tryBalance: 12, usdBalance: 0 });
+    expect(rpc).toHaveBeenCalledWith('set_portfolio_cash', { p_portfolio_id: 'portfolio-test', p_try_balance: 12, p_usd_balance: 0 });
+    const [a, b] = await Promise.all([fetchPortfolioDataCombined('portfolio-test'), fetchPortfolioDataCombined('portfolio-test')]);
+    expect(a).toBe(b);
+    expect(a.cash.tryBalance).toBe(100);
+    expect(a.realizedPnl.tryPnl).toBe(1200);
+  } finally { rpc.mockRestore(); }
 });
 
-it('distinguishes empty positions from RPC failures and keeps archival scoped to active user portfolios', async () => {
+it('does not publish failed manual cash edits', async () => {
   const client = getSupabaseClient();
-  const rpc = jest.spyOn(client, 'rpc');
-  const from = jest.spyOn(client, 'from');
+  const rpc = jest.spyOn(client, 'rpc').mockResolvedValue({ data: null, error: { message: 'network failed' } } as any);
+  const change = jest.fn();
+  const unsubscribe = subscribePortfolioChanges(change);
   try {
-    rpc.mockImplementationOnce(() => Promise.resolve({ data: null, error: null }) as unknown as ReturnType<typeof client.rpc>);
-    rpc.mockImplementationOnce(() => { throw new Error('offline'); });
-    rpc.mockImplementationOnce(() => { throw new Error('offline'); });
-    await expect(fetchPortfolioPositions('portfolio')).resolves.toEqual([]);
-    await expect(fetchPortfolioPositions('portfolio')).rejects.toThrow(/Pozisyonlar yüklenemedi/);
-    await expect(fetchPortfolioCashState('portfolio')).rejects.toThrow(/Nakit durumu yüklenemedi/);
-    const update = jest.fn().mockReturnThis();
-    const eq = jest.fn().mockReturnThis();
-    const is = jest.fn().mockResolvedValueOnce({ error: null }).mockRejectedValueOnce(new Error('offline'));
-    from.mockReturnValue({ update, eq, is } as unknown as ReturnType<typeof client.from>);
-    const listener = jest.fn();
-    const unsubscribe = subscribePortfolioChanges(listener);
+    await expect(setPortfolioCash({ portfolioId: 'portfolio-test', tryBalance: 0, usdBalance: 0 })).rejects.toThrow(/Nakit/);
+    await expect(fetchPortfolioCash('portfolio-test')).rejects.toThrow(/Nakit/);
+    await expect(fetchRealizedPnl('portfolio-test')).rejects.toThrow(/Satış/);
+    expect(change).not.toHaveBeenCalled();
+  } finally { unsubscribe(); rpc.mockRestore(); }
+});
+
+it.each([null, undefined, '', true, {}, -1, NaN, Infinity, 'invalid'])(
+  'rejects an invalid manual cash balance %p instead of inventing a zero', async (balance) => {
+    const client = getSupabaseClient();
+    const rpc = jest.spyOn(client, 'rpc').mockResolvedValue({
+      data: { try_balance: balance, usd_balance: 0 }, error: null,
+    } as unknown as Awaited<ReturnType<typeof client.rpc>>);
     try {
-      await archiveAllUserPortfolios('user-a');
-      await archiveAllUserPortfolios('user-a');
-      expect(from).toHaveBeenCalledWith('portfolios');
-      expect(update).toHaveBeenCalledWith({ archived_at: expect.any(String) });
-      expect(eq).toHaveBeenCalledWith('user_id', 'user-a');
-      expect(is).toHaveBeenCalledWith('archived_at', null);
-      expect(listener).toHaveBeenCalledTimes(1);
+      await expect(fetchPortfolioCash('portfolio')).rejects.toThrow(/Geçersiz finansal tutar/);
     } finally {
-      unsubscribe();
+      rpc.mockRestore();
     }
+  }
+);
+
+it('reads explicit zero cash and permits negative realized profit while rejecting missing results', async () => {
+  const client = getSupabaseClient();
+  const rpc = jest.spyOn(client, 'rpc');
+  try {
+    rpc.mockResolvedValueOnce({ data: { try_balance: '0', usd_balance: '12.50' }, error: null } as any);
+    await expect(fetchPortfolioCash('portfolio')).resolves.toEqual({ tryBalance: 0, usdBalance: 12.5 });
+    rpc.mockResolvedValueOnce({ data: { try_pnl: '-50.25', usd_pnl: 0 }, error: null } as any);
+    await expect(fetchRealizedPnl('portfolio')).resolves.toEqual({ tryPnl: -50.25, usdPnl: 0 });
+    rpc.mockResolvedValueOnce({ data: null, error: null } as any);
+    await expect(fetchPortfolioCash('portfolio')).rejects.toThrow(/Geçersiz finansal tutar/);
+    rpc.mockResolvedValueOnce({ data: null, error: null } as any);
+    await expect(fetchRealizedPnl('portfolio')).rejects.toThrow(/Geçersiz finansal tutar/);
   } finally {
     rpc.mockRestore();
-    from.mockRestore();
   }
 });
 
-it('surfaces database errors for cash lookup and initialization without publishing a change', async () => {
+it('returns an empty position list for no rows and wraps an unexpected transport failure', async () => {
   const client = getSupabaseClient();
   const rpc = jest.spyOn(client, 'rpc');
-  const listener = jest.fn();
-  const unsubscribe = subscribePortfolioChanges(listener);
   try {
-    rpc.mockImplementationOnce(() => Promise.resolve({ data: null, error: { message: 'offline' } }) as unknown as ReturnType<typeof client.rpc>);
-    rpc.mockImplementationOnce(() => Promise.resolve({ data: null, error: { message: 'offline' } }) as unknown as ReturnType<typeof client.rpc>);
-    const params = { portfolioId: 'portfolio', tryOpeningBalance: 1.25, usdOpeningBalance: 2.50 };
-    await expect(fetchPortfolioCashState(params.portfolioId)).rejects.toThrow(/Nakit durumu yüklenemedi/);
-    await expect(initializePortfolioCashAccounts(params)).rejects.toThrow(/Nakit hesabı başlatılamadı/);
-    expect(rpc).toHaveBeenLastCalledWith('initialize_portfolio_cash_accounts', {
-      p_portfolio_id: 'portfolio', p_try_opening_balance: 1.25, p_usd_opening_balance: 2.50,
-      p_client_request_id: expect.stringMatching(/^[a-f0-9-]{36}$/i),
-    });
-    expect(listener).not.toHaveBeenCalled();
-    rpc.mockImplementationOnce(() => { throw new Error('offline'); });
-    await expect(initializePortfolioCashAccounts(params)).rejects.toThrow(/Nakit hesabı başlatılamadı/);
+    rpc.mockResolvedValueOnce({ data: null, error: null } as any);
+    await expect(fetchPortfolioPositions('portfolio')).resolves.toEqual([]);
+    rpc.mockRejectedValueOnce(new Error('offline'));
+    await expect(fetchPortfolioPositions('portfolio')).rejects.toThrow(/Pozisyonlar yüklenemedi/);
   } finally {
     rpc.mockRestore();
-    unsubscribe();
   }
 });

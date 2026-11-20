@@ -46,7 +46,10 @@ function getExpoCalendar() {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     return require('expo-calendar');
   } catch (err) {
-    log.warn('expo-calendar package not available', err);
+    log.warn('calendar.native.unavailable', {
+      message: 'Calendar native unavailable.',
+      error: err
+    });
     return null;
   }
 }
@@ -62,10 +65,16 @@ export async function requestCalendarPermission(): Promise<boolean> {
 
   try {
     const { status } = await ExpoCalendar.requestCalendarPermissionsAsync();
-    log.info('Calendar permission status', { status });
+    log.info('calendar.permission.checked', {
+      message: 'Calendar permission checked.',
+      context: { status }
+    });
     return status === 'granted';
   } catch (err) {
-    log.error('Failed to request calendar permission', err);
+    log.error('calendar.permission.failed', {
+      message: 'Calendar permission failed.',
+      error: err
+    });
     return false;
   }
 }
@@ -81,7 +90,10 @@ export async function getDefaultAppleCalendarId(): Promise<string | null> {
     // 1. Try to get default calendar
     const defaultCalendar = await ExpoCalendar.getDefaultCalendarAsync().catch(() => null);
     if (defaultCalendar?.id && defaultCalendar.allowsModifications !== false) {
-      log.debug('Using default Apple calendar', { id: defaultCalendar.id, title: defaultCalendar.title });
+      log.debug('calendar.default.selected', {
+        message: 'Calendar default selected.',
+        context: { id: defaultCalendar.id }
+      });
       return defaultCalendar.id;
     }
 
@@ -92,13 +104,19 @@ export async function getDefaultAppleCalendarId(): Promise<string | null> {
     );
 
     if (writableCal) {
-      log.debug('Using first writable Apple calendar', { id: writableCal.id, title: writableCal.title });
+      log.debug('calendar.writable.selected', {
+        message: 'Calendar writable selected.',
+        context: { id: writableCal.id }
+      });
       return writableCal.id;
     }
 
     return null;
   } catch (err) {
-    log.error('Failed to get default Apple calendar', err);
+    log.error('calendar.lookup.failed', {
+      message: 'Calendar lookup failed.',
+      error: err
+    });
     return null;
   }
 }
@@ -186,11 +204,18 @@ export async function exportEventsToAppleCalendar(events: CalendarEventItem[]): 
 
       addedCount++;
     } catch (err) {
-      log.warn('Failed to add event to Apple Calendar', { eventId: event.id, err });
+      log.warn('calendar.event.failed', {
+        message: 'Calendar event failed.',
+        context: { eventId: event.id },
+        error: err
+      });
     }
   }
 
-  log.info('Apple Takvime aktarıldı', { aktarılan: addedCount, toplam: events.length });
+  log.info('calendar.export.completed', {
+    message: 'Calendar export completed.',
+    context: { addedCount: addedCount, totalCount: events.length }
+  });
 
   return {
     success: addedCount > 0,

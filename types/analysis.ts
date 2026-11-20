@@ -1,5 +1,7 @@
-export const ANALYST_CODES = ['market', 'social', 'news', 'fundamentals'] as const;
+export const ANALYST_CODES = ['market', 'macro', 'news', 'fundamentals'] as const;
 export type AnalystCode = (typeof ANALYST_CODES)[number];
+// Historical reports retain the analyst configuration used when they were created.
+export type ReportAnalystCode = AnalystCode | 'social';
 
 export const ANALYSIS_LANGUAGES = ['tr', 'en'] as const;
 export type AnalysisLanguage = (typeof ANALYSIS_LANGUAGES)[number];
@@ -106,7 +108,7 @@ export interface AnalysisEffectiveConfig {
   deep: AnalysisModelConfig;
   researchRounds: number;
   riskRounds: number;
-  analysts: AnalystCode[];
+  analysts: ReportAnalystCode[];
   language: AnalysisLanguage;
 }
 

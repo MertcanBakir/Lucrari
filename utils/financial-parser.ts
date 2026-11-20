@@ -211,7 +211,10 @@ export function calculateTradeTotal(
     };
   }
 
-  const total = Number((qtyParsed.value * priceParsed.value).toFixed(4));
+  const total = qtyParsed.value * priceParsed.value;
+  if (!Number.isFinite(total) || total <= 0) {
+    return { isValid: false, total: null, quantity: qtyParsed.value, price: priceParsed.value, error: 'İşlem tutarı geçerli bir pozitif sayı olmalıdır.' };
+  }
   return {
     isValid: true,
     total,

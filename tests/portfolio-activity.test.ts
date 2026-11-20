@@ -1,49 +1,4 @@
-/**
- * Lucrari — Portfolio Activity Comprehensive Hardening Suite
- * 
- * Exhaustively validates production behavior and exact RPC call counts:
- * 1. Strict Fail-Closed Normalization & Contract Integrity:
- *    - Rejects string booleans ("false"), numbers (0, 1), and nulls for is_reversed.
- *    - Rejects non-UUID activity_id, portfolio_id, instrument_id ("abc", "xyz").
- *    - Rejects invalid timestamps ("1", "2026-08-31", missing timezone "2026-08-31T10:00:00").
- *    - Rejects invalid market ("INVALID", "BIST").
- *    - Rejects CASH_FLOW records with populated transaction fields (symbol, quantity, unit_price, etc.).
- *    - Rejects string numeric values ("1000", "10") without silent casting.
- *    - Enforces is_reversed=false cannot have reversed_at or reversal_reason.
- *    - Enforces is_reversed=true must have valid reversed_at timestamptz.
- * 2. Technical Error Leak Elimination:
- *    - Exact error message for portfolio_activity_invalid_filter contains NO "portfolio_activity_".
- *    - Access-denied error contains NO technical codes/hints/details.
- *    - Network error contains NO duplicate Turkish sentences concatenated by colons.
- *    - PortfolioOperationError.isRetryable is true for transport, false for domain/auth.
- * 3. Deterministic Error & Retry Decision Contracts (Exact RPC Count Assertions):
- *    - 1. portfolio_activity_invalid_filter -> exactly 1 RPC, throws error immediately.
- *    - 2. Auth / access denied -> exactly 1 RPC, throws error, no stale fallback.
- *    - 3. Broken normalization response -> exactly 1 RPC, throws contract error, no stale fallback.
- *    - 4. Transport error + exact cache -> returns stale cache with original timestamp preserved.
- *    - 5. Stale cache normal cache-hit -> returns stale cache, exactly 0 new RPC calls.
- *    - 6. Successful retry -> stale cleared, timestamp advanced to current time.
- *    - 7. Continuous revision storm, cache empty -> exactly 3 RPCs, then controlled error thrown.
- *    - 8. Continuous revision storm, cache exists -> exactly 3 RPCs, then stale cache returned.
- *    - 9. Single real mutation (notifyPortfolioChanged) -> exactly 2 RPCs and fresh result.
- *    - 10. Old Promise finally block cannot delete a newer in-flight request.
- *    - 11. limit=10 and limit=20 calls are independently fetched and cached.
- * 4. Active Query Identity & Full Metadata Scoping (Zero-Frame Isolation):
- *    - ALL -> BUY filter switch immediately returns empty items, sections, and clears old error/stale banner.
- *    - Portfolio A -> Portfolio B (same user) instant zero-frame data isolation.
- *    - User A -> User B instant zero-frame isolation.
- *    - Search query transition THYAO -> AAPL instant zero-frame isolation.
- *    - Failed new filter query resolves to initial_error (not masked as filtered_empty or stale data).
- *    - Background refresh failure of the SAME query retains previous data and resolves to stale_data.
- * 5. Portfolio Resolution Async Race & User Scoping:
- *    - User A pending -> User B switches -> A resolves late: A is rejected and does not mutate B.
- *    - B resolves before A resolves: final state belongs strictly to User B.
- *    - isResolvingPortfolio resolves to initial_loading.
- *    - portfolioResolutionError resolves to initial_error (not auth_failed).
- * 6. Keyset 4-part Cursor Pagination & Read-Only Invariants:
- *    - First page sends null cursor fields; second page passes 4-part tuple cursor.
- *    - Read-only safety invariant: never invokes mutation RPCs or FIFO engines.
- */
+/** Portfolio calculations, validation and request behavior for the simplified model. */
 
 import { describe, it, beforeEach, afterEach } from '@jest/globals';
 import assert from 'node:assert';
@@ -117,8 +72,9 @@ describe('Portfolio Activity Comprehensive Hardening Suite', () => {
     const cashRow = {
       activity_id: validActivityId1,
       portfolio_id: defaultPortfolioId,
-      source_kind: 'CASH_FLOW',
-      activity_type: 'WITHDRAWAL',
+      source_kind: 'TRANSACTION',
+      activity_type: 'SELL',
+      instrument_id: validInstrumentId1, symbol: 'THYAO', company_name: 'THY', market: 'BIST100', quantity: 1, unit_price: 50,
       currency: 'TRY',
       gross_amount: 50,
       occurred_at: date,
@@ -145,7 +101,6 @@ describe('Portfolio Activity Comprehensive Hardening Suite', () => {
         [{ portfolio_id: false }, /portfolio_id/],
         [{ source_kind: 'UNKNOWN' }, /source_kind/],
         [{ activity_type: 'TRANSFER' }, /activity_type/],
-        [{ activity_type: 'SELL' }, /kaynak türü uyuşmazlığı/],
         [{ created_at: 'invalid' }, /created_at/],
         [{ gross_amount: NaN }, /gross_amount/],
         [{ gross_amount: 0 }, /gross_amount/],
@@ -166,27 +121,6 @@ describe('Portfolio Activity Comprehensive Hardening Suite', () => {
       ]) {
         assert.throws(() => normalizePortfolioActivityRow({ ...tradeRow, ...fields }), /zorunludur/);
       }
-    });
-
-    it('keeps cash flows separate from trades even when transaction fields are falsy', () => {
-      for (const fields of [
-        { instrument_id: '' }, { symbol: '' }, { company_name: '' }, { market: '' }, { quantity: 0 }, { unit_price: 0 },
-      ]) {
-        assert.throws(() => normalizePortfolioActivityRow({ ...cashRow, ...fields }), /enstrüman alanları/);
-      }
-      const normalized = normalizePortfolioActivityRow({
-        ...cashRow, is_reversed: true, reversed_at: date, notes: ' ', reversal_reason: ' corrected ',
-      });
-      assert.equal(normalized.notes, null);
-      assert.equal(normalized.reversalReason, 'corrected');
-      assert.equal(normalized.reversedAt, date);
-      assert.equal(normalized.instrumentId, null);
-      assert.equal(normalizePortfolioActivityRow({
-        ...cashRow, is_reversed: true, reversed_at: date, reversal_reason: ' ',
-      }).reversalReason, null);
-      assert.throws(() => normalizePortfolioActivityRow({
-        ...cashRow, is_reversed: true, reversed_at: date, reversal_reason: false,
-      }), /Geçersiz geri alma nedeni/);
     });
 
     it('discards oversized, malformed, or inconsistent pages', () => {
@@ -222,7 +156,7 @@ describe('Portfolio Activity Comprehensive Hardening Suite', () => {
       assert.equal(formatActivityQuantity(0.00001234), '0,00001234 Adet');
       assert.match(formatActivityGrossAmount(12.5, 'TRY'), /12,50/);
       assert.match(formatActivityUnitPrice(12, 'TRY'), /12,00/);
-      assert.equal(getActivityTypeMeta('WITHDRAWAL').sign, '-');
+      assert.equal(getActivityTypeMeta('SELL').sign, '-');
     });
 
     it('scopes query metadata and portfolio resolution to the current user', () => {
@@ -321,8 +255,9 @@ describe('Portfolio Activity Comprehensive Hardening Suite', () => {
         normalizePortfolioActivityRow({
           activity_id: 'abc',
           portfolio_id: defaultPortfolioId,
-          source_kind: 'CASH_FLOW',
-          activity_type: 'DEPOSIT',
+          source_kind: 'TRANSACTION',
+          activity_type: 'BUY',
+          instrument_id: validInstrumentId1, symbol: 'THYAO', company_name: 'THY', market: 'BIST100', quantity: 1, unit_price: 50,
           gross_amount: 1000,
           currency: 'TRY',
           occurred_at: '2026-08-31T10:00:00Z',
@@ -336,8 +271,9 @@ describe('Portfolio Activity Comprehensive Hardening Suite', () => {
         normalizePortfolioActivityRow({
           activity_id: validActivityId1,
           portfolio_id: 'xyz',
-          source_kind: 'CASH_FLOW',
-          activity_type: 'DEPOSIT',
+          source_kind: 'TRANSACTION',
+          activity_type: 'BUY',
+          instrument_id: validInstrumentId1, symbol: 'THYAO', company_name: 'THY', market: 'BIST100', quantity: 1, unit_price: 50,
           gross_amount: 1000,
           currency: 'TRY',
           occurred_at: '2026-08-31T10:00:00Z',
@@ -375,8 +311,9 @@ describe('Portfolio Activity Comprehensive Hardening Suite', () => {
           normalizePortfolioActivityRow({
             activity_id: validActivityId1,
             portfolio_id: defaultPortfolioId,
-            source_kind: 'CASH_FLOW',
-            activity_type: 'DEPOSIT',
+            source_kind: 'TRANSACTION',
+            activity_type: 'BUY',
+          instrument_id: validInstrumentId1, symbol: 'THYAO', company_name: 'THY', market: 'BIST100', quantity: 1, unit_price: 50,
             gross_amount: 1000,
             currency: 'TRY',
             occurred_at: badDate,
@@ -409,28 +346,6 @@ describe('Portfolio Activity Comprehensive Hardening Suite', () => {
       }, /geçerli piyasa \(market\) zorunludur/);
     });
 
-    it('6. Rejects CASH_FLOW records with populated transaction fields (does not silently nullify them)', () => {
-      assert.throws(() => {
-        normalizePortfolioActivityRow({
-          activity_id: validActivityId1,
-          portfolio_id: defaultPortfolioId,
-          source_kind: 'CASH_FLOW',
-          activity_type: 'DEPOSIT',
-          instrument_id: validInstrumentId1, // Illegally populated on cash flow!
-          symbol: 'THYAO',
-          company_name: 'THY',
-          market: 'BIST100',
-          quantity: 10,
-          unit_price: 300,
-          gross_amount: 3000,
-          currency: 'TRY',
-          occurred_at: '2026-08-31T10:00:00Z',
-          created_at: '2026-08-31T10:00:01Z',
-          is_reversed: false,
-        });
-      }, /Nakit akışı satırında enstrüman alanları dolu olamaz/);
-    });
-
     it('7. Rejects string numeric values without silent casting', () => {
       assert.throws(() => {
         normalizePortfolioActivityRow({
@@ -456,8 +371,9 @@ describe('Portfolio Activity Comprehensive Hardening Suite', () => {
         normalizePortfolioActivityRow({
           activity_id: validActivityId1,
           portfolio_id: defaultPortfolioId,
-          source_kind: 'CASH_FLOW',
-          activity_type: 'DEPOSIT',
+          source_kind: 'TRANSACTION',
+          activity_type: 'BUY',
+          instrument_id: validInstrumentId1, symbol: 'THYAO', company_name: 'THY', market: 'BIST100', quantity: 1, unit_price: 50,
           gross_amount: '1000', // String instead of number
           currency: 'TRY',
           occurred_at: '2026-08-31T10:00:00Z',
@@ -472,8 +388,9 @@ describe('Portfolio Activity Comprehensive Hardening Suite', () => {
         normalizePortfolioActivityRow({
           activity_id: validActivityId1,
           portfolio_id: defaultPortfolioId,
-          source_kind: 'CASH_FLOW',
-          activity_type: 'DEPOSIT',
+          source_kind: 'TRANSACTION',
+          activity_type: 'BUY',
+          instrument_id: validInstrumentId1, symbol: 'THYAO', company_name: 'THY', market: 'BIST100', quantity: 1, unit_price: 50,
           gross_amount: 1000,
           currency: 'TRY',
           occurred_at: '2026-08-31T10:00:00Z',
@@ -698,8 +615,9 @@ describe('Portfolio Activity Comprehensive Hardening Suite', () => {
             data: [
               {
                 activity_id: 'invalid-non-uuid', // Broken!
-                source_kind: 'CASH_FLOW',
-                activity_type: 'DEPOSIT',
+                source_kind: 'TRANSACTION',
+                activity_type: 'BUY',
+          instrument_id: validInstrumentId1, symbol: 'THYAO', company_name: 'THY', market: 'BIST100', quantity: 1, unit_price: 50,
                 portfolio_id: defaultPortfolioId,
                 gross_amount: 1000,
                 currency: 'TRY',
@@ -1575,15 +1493,15 @@ describe('Portfolio Activity Comprehensive Hardening Suite', () => {
             data: [
               {
                 activity_id: validActivityId2,
-                source_kind: 'CASH_FLOW',
-                activity_type: 'DEPOSIT',
+                source_kind: 'TRANSACTION',
+                activity_type: 'BUY',
                 portfolio_id: defaultPortfolioId,
-                instrument_id: null,
-                symbol: null,
-                company_name: null,
-                market: null,
-                quantity: null,
-                unit_price: null,
+                instrument_id: validInstrumentId1,
+                symbol: 'THYAO',
+                company_name: 'THY',
+                market: 'BIST100',
+                quantity: 1,
+                unit_price: 50,
                 gross_amount: 5000,
                 currency: 'TRY',
                 occurred_at: '2026-08-30T15:00:00Z',
@@ -1623,7 +1541,7 @@ describe('Portfolio Activity Comprehensive Hardening Suite', () => {
       assert.strictEqual(rpcCalls[1].p_before_activity_id, validActivityId1);
     });
 
-    it('33. Read-only safety invariant: never invokes mutation RPCs or FIFO engines', async () => {
+    it('33. Read-only safety invariant: never invokes mutation RPCs', async () => {
       const invokedRpcNames: string[] = [];
 
       const mockClient = {
@@ -1649,7 +1567,6 @@ describe('Portfolio Activity Comprehensive Hardening Suite', () => {
       assert.strictEqual(invokedRpcNames.length, 1);
       assert.strictEqual(invokedRpcNames[0], 'get_my_portfolio_activity');
       assert.strictEqual(invokedRpcNames.includes('record_portfolio_transaction'), false);
-      assert.strictEqual(invokedRpcNames.includes('record_cash_flow'), false);
       assert.strictEqual(invokedRpcNames.includes('reverse_portfolio_transaction'), false);
       assert.strictEqual(invokedRpcNames.includes('reset_my_investments'), false);
     });

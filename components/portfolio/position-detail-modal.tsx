@@ -232,7 +232,7 @@ export function PositionDetailModal({
                 </View>
                 <View style={styles.detailGridCol}>
                   <Text style={[styles.detailGridLabel, { color: theme.textSecondary }]}>
-                    Toplam Kâr / Zarar
+                    Açık Pozisyon Kâr / Zarar
                   </Text>
                   <Text
                     style={[
@@ -249,14 +249,14 @@ export function PositionDetailModal({
                 </View>
               </View>
 
-              {/* Optional Row 4: FIFO Gerçekleşmiş K/Z */}
+              {/* Optional Row 4: Satışlardan Kâr / Zarar */}
               {realizedPnl !== 0 && (
                 <>
                   <View style={[styles.gridDivider, { backgroundColor: theme.borderSubtle }]} />
                   <View style={styles.detailGridRow}>
                     <View style={styles.detailGridCol}>
                       <Text style={[styles.detailGridLabel, { color: theme.textSecondary }]}>
-                        FIFO Gerçekleşmiş K/Z
+                        Satışlardan Kâr / Zarar
                       </Text>
                       <Text
                         style={[

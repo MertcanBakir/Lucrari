@@ -162,3 +162,11 @@ it('reports source link exceptions and disables duplicate calendar exports', asy
   view.rerender(<EventDetailModal visible event={{ ...economic, country: undefined, period: undefined }} onClose={close} />);
   expect(screen.queryByText('Apple Takvime Ekle')).toBeNull();
 });
+
+it.each(['Kapanış Öncesi', 'Kapanış Sonrası'])('shows %s only in earnings details', async timeLabel => {
+  render(<DayEventsList selectedDate={selectedDate} events={[{ ...earnings, timeLabel }, economic]} />);
+  expect(screen.queryByText(timeLabel)).toBeNull();
+  expect(screen.getByText(economic.timeLabel)).toBeOnTheScreen();
+  fireEvent.press(screen.getByText(earnings.title));
+  expect(await screen.findByText(timeLabel)).toBeOnTheScreen();
+});

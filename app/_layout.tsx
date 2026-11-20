@@ -29,9 +29,11 @@ function RootContent() {
     <NavigationThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="portfolio-chart" options={{ headerShown: false }} />
         <Stack.Screen name="portfolio-activity" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
         <Stack.Screen name="system-health" options={{ headerShown: false }} />
+        <Stack.Screen name="agent-health" options={{ headerShown: false }} />
         <Stack.Screen name="supabase-health" options={{ headerShown: false }} />
       </Stack>
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />

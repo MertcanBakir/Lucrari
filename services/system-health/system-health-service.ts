@@ -100,7 +100,10 @@ export async function fetchSystemHealth(
       // 1. Ensure authenticated user session exists before calling RPC
       const authResult = await ensureAnonymousSession();
       if (!authResult.user) {
-        log.warn('Oturum doğrulanamadı', { error: authResult.error });
+        log.warn('system.health.session.failed', {
+          message: 'System health session failed.',
+          error: authResult.error
+        });
         throw new Error('Oturum doğrulanamadı. Lütfen tekrar deneyin.');
       }
 
@@ -110,14 +113,16 @@ export async function fetchSystemHealth(
       const { data, error } = await client.rpc('get_mobile_system_health');
 
       if (error) {
-        log.error('get_mobile_system_health RPC hatası', {
-          code: error.code,
-          message: error.message,
+        log.error('system.health.rpc.failed', {
+          message: 'System health rpc failed.',
+          error
         });
 
         // Retain stale cached report in snapshot and notify subscribers
         if (cachedReport) {
-          log.warn('Arka plan yenileme hatası, önceki sistem durumu verisi korunuyor');
+          log.warn('system.health.cache.stale', {
+            message: 'System health cache stale.'
+          });
           const staleReport: SystemHealthReport = {
             ...cachedReport.report,
             isStale: true,
@@ -154,13 +159,9 @@ export async function fetchSystemHealth(
       };
       notifySubscribers(report);
 
-      log.info('Sistem sağlık raporu başarıyla güncellendi', {
-        totalJobs: items.length,
-        overallStatus: overall.status,
-        failedCount: overall.failedCount,
-        overdueCount: overall.overdueCount,
-        unknownCount: overall.unknownCount,
-        isIncomplete,
+      log.debug('system.health.loaded', {
+        message: 'System health loaded.',
+        context: { totalJobs: items.length, overallStatus: overall.status, failedCount: overall.failedCount, overdueCount: overall.overdueCount, unknownCount: overall.unknownCount, isIncomplete }
       });
 
       return report;
@@ -170,8 +171,9 @@ export async function fetchSystemHealth(
         ? 'Oturum doğrulanamadı. Lütfen tekrar deneyin.'
         : 'Sistem durumu bilgisi alınamadı.';
 
-      log.error('Sistem durumu yüklenirken hata', {
-        error: err instanceof Error ? err.message : String(err),
+      log.error('system.health.failed', {
+        message: 'System health failed.',
+        error: err
       });
 
       if (cachedReport) {

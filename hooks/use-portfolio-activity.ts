@@ -239,12 +239,17 @@ export function usePortfolioActivity(
       });
 
     try {
-      log.debug('Varsayılan portföy çözümleniyor', { userId: currentUserId, token });
+      log.debug('portfolio.activity.owner.resolving', {
+        message: 'Portfolio activity owner resolving.',
+        context: { userId: currentUserId, generation: token }
+      });
       const portfolio = await ensureDefaultPortfolio(currentUserId);
 
       // Discard if user changed, newer resolution started, or unmounted
       if (!checkAccept()) {
-        log.debug('Eski portföy çözümleme yanıtı reddedildi (token/user mismatch or unmounted)');
+        log.debug('portfolio.activity.owner.discarded', {
+          message: 'Portfolio activity owner discarded.'
+        });
         return;
       }
 
@@ -264,7 +269,10 @@ export function usePortfolioActivity(
         return;
       }
       const msg = 'Portföy bilgisi alınamadı. Lütfen tekrar deneyiniz.';
-      log.warn('Varsayılan portföy çözümlenemedi', { error: String(err) });
+      log.warn('portfolio.activity.owner.failed', {
+        message: 'Portfolio activity owner failed.',
+        error: err
+      });
       setPortfolioResolutionState({
         status: 'error',
         userId: currentUserId,
@@ -305,12 +313,9 @@ export function usePortfolioActivity(
       const targetQueryKey = activeQueryKey;
 
       try {
-        log.debug('İlk sayfa yükleniyor', {
-          portfolioId: currentPortfolioId,
-          filter: activeFilter,
-          search: debouncedSearch,
-          isRefreshAction,
-          generationToken,
+        log.debug('portfolio.activity.page.loading', {
+          message: 'Portfolio activity page loading.',
+          context: { portfolioId: currentPortfolioId, filter: activeFilter, hasSearch: Boolean(debouncedSearch), isRefreshAction, generationToken }
         });
 
         const result = await fetchPortfolioActivityPage({
@@ -327,7 +332,9 @@ export function usePortfolioActivity(
           currentUserId !== activeUserIdRef.current ||
           !isMountedRef.current
         ) {
-          log.debug('Eski sorgu yanıtı reddedildi (generation/user mismatch)');
+          log.debug('portfolio.activity.page.discarded', {
+            message: 'Portfolio activity page discarded.'
+          });
           return;
         }
 
@@ -351,7 +358,11 @@ export function usePortfolioActivity(
 
         const errMsg =
           err instanceof Error ? err.message : 'Portföy hareketleri yüklenemedi.';
-        log.warn('İlk sayfa yükleme hatası', { error: errMsg, isRefreshAction });
+        log.warn('portfolio.activity.page.failed', {
+          message: 'Portfolio activity page failed.',
+          context: { isRefreshAction },
+          error: err
+        });
 
         if (
           isRefreshAction &&
@@ -423,8 +434,8 @@ export function usePortfolioActivity(
           currentActiveScopeKey
         )
       ) {
-        log.info('Portföy mutasyon bildirimi alındı, hareketler reaktif yenileniyor', {
-          scopeKey: subscriptionScopeKey,
+        log.debug('portfolio.activity.refresh.requested', {
+          message: 'Portfolio activity refresh requested.'
         });
         loadInitialPageRef.current(true);
       }
@@ -461,11 +472,9 @@ export function usePortfolioActivity(
     setIsLoadingMore(true);
 
     try {
-      log.debug('Sonraki sayfa yükleniyor', {
-        cursor: currentCursor,
-        filter: activeFilter,
-        search: debouncedSearch,
-        currentToken,
+      log.debug('portfolio.activity.next.loading', {
+        message: 'Portfolio activity next loading.',
+        context: { hasCursor: Boolean(currentCursor), filter: activeFilter, hasSearch: Boolean(debouncedSearch), currentToken }
       });
 
       const result = await fetchPortfolioActivityPage({
@@ -486,7 +495,9 @@ export function usePortfolioActivity(
         }) ||
         !isMountedRef.current
       ) {
-        log.debug('Eski loadMore yanıtı reddedildi (live query/token mismatch or unmounted)');
+        log.debug('portfolio.activity.next.discarded', {
+          message: 'Portfolio activity next discarded.'
+        });
         return;
       }
 
@@ -516,7 +527,10 @@ export function usePortfolioActivity(
 
       const errMsg =
         err instanceof Error ? err.message : 'Sonraki sayfa yüklenemedi.';
-      log.warn('Sonraki sayfa yükleme hatası', { error: errMsg });
+      log.warn('portfolio.activity.next.failed', {
+        message: 'Portfolio activity next failed.',
+        error: err
+      });
 
       setRawState((prev) => {
         if (prev.loadedQueryKey !== currentQueryKey) return prev;

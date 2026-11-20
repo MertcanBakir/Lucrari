@@ -294,10 +294,9 @@ export function useWatchlist(): UseWatchlistReturn {
             if (knownTotal > 0 && offset >= knownTotal) {
               const lastValidPage = Math.max(0, Math.floor((knownTotal - 1) / WATCHLIST_PAGE_SIZE));
               if (lastValidPage !== targetPageIndex) {
-                log.info('Sayfalama toplam kaydı aştı, geçerli son sayfaya dönülüyor', {
-                  offset,
-                  knownTotal,
-                  lastValidPage,
+                log.info('watchlist.page.reconciled', {
+                  message: 'Watchlist page reconciled.',
+                  context: { offset, knownTotal, lastValidPage }
                 });
                 return loadPage(lastValidPage, forceRefresh);
               }
@@ -324,13 +323,16 @@ export function useWatchlist(): UseWatchlistReturn {
           pageRequestIdRef.current === currentRequestId
         ) {
           const errorObj = err instanceof Error ? err : new Error('İzleme listesi yüklenemedi');
-          log.warn('İzleme listesi sayfası yüklenirken hata', errorObj);
+          log.warn('watchlist.page.failed', {
+            message: 'Watchlist page failed.',
+            error: errorObj
+          });
 
           // If a nonzero page failed due to genuine out-of-bounds rejection, automatically step back
           if (targetPageIndex > 0 && isWatchlistPageOutOfRangeError(err)) {
-            log.info('Sayfa aralık dışında tespit edildi, bir önceki sayfaya uzlaştırılıyor', {
-              failedPageIndex: targetPageIndex,
-              fallbackPage: targetPageIndex - 1,
+            log.info('watchlist.page.bounds.reconciled', {
+              message: 'Watchlist page bounds reconciled.',
+              context: { failedPageIndex: targetPageIndex, fallbackPage: targetPageIndex - 1 }
             });
             return loadPage(targetPageIndex - 1, true);
           }
@@ -430,7 +432,10 @@ export function useWatchlist(): UseWatchlistReturn {
         }
         return result;
       } catch (err) {
-        log.warn('İzleme üyeliği listesi yüklenemedi', { error: String(err) });
+        log.warn('watchlist.membership.failed', {
+          message: 'Watchlist membership failed.',
+          error: err
+        });
         if (isMountedRef.current && currentUserIdRef.current === activeUserId) {
           setRawMembership((prev) => ({
             ...prev,
@@ -500,7 +505,11 @@ export function useWatchlist(): UseWatchlistReturn {
         return createToggleWatchlistSuccessResult(res);
       } catch (err) {
         const userFriendlyError = formatWatchlistRpcError(err);
-        log.error('Watchlist toggle hatası', { instrumentId, isWatched, error: String(err) });
+        log.error('watchlist.mutation.failed', {
+          message: 'Watchlist mutation failed.',
+          context: { instrumentId, isWatched },
+          error: err
+        });
         return createToggleWatchlistErrorResult(userFriendlyError);
       } finally {
         if (isMountedRef.current && currentUserIdRef.current === activeUserId) {

@@ -1,7 +1,7 @@
 /**
  * Lucrari — Portfolio Activity Screen
  * 
- * Full-screen route for exploring historical transactions and cash flows with
+ * Full-screen route for exploring historical transactions with
  * keyset cursor pagination, search filter, and read-only detail inspection.
  */
 

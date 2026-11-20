@@ -3,7 +3,7 @@
  * 
  * Mapped from Lucrari PostgreSQL Schema.
  * Includes instruments (BIST100, NASDAQ100, CRYPTO, TEFAS, FX),
- * latest prices, user portfolios, transactions, cash flows, FIFO matches,
+ * latest prices, user portfolios, transactions, optional cash,
  * snapshots, earnings events, and economic calendar.
  */
 
@@ -27,7 +27,6 @@ export type FiscalPeriod = 'Q1' | 'Q2' | 'Q3' | 'FY';
 export type TradingSession = 'pre_market' | 'time_not_supplied' | 'after_hours';
 export type CountryCode = 'TR' | 'US';
 export type TransactionType = 'BUY' | 'SELL';
-export type CashFlowType = 'DEPOSIT' | 'WITHDRAWAL';
 
 export interface Database {
   public: {
@@ -237,130 +236,39 @@ export interface Database {
         Row: {
           portfolio_id: string;
           currency: CurrencyCode;
-          opening_balance: number;
-          initialized_at: string;
+          current_balance: number;
           created_at: string;
           updated_at: string;
         };
         Insert: {
           portfolio_id: string;
           currency: CurrencyCode;
-          opening_balance?: number;
-          initialized_at?: string;
+          current_balance?: number;
           created_at?: string;
           updated_at?: string;
         };
         Update: {
           portfolio_id?: string;
           currency?: CurrencyCode;
-          opening_balance?: number;
-          initialized_at?: string;
+          current_balance?: number;
           created_at?: string;
           updated_at?: string;
         };
         Relationships: [];
       };
-      portfolio_cash_flows: {
-        Row: {
-          id: string;
-          portfolio_id: string;
-          flow_type: CashFlowType;
-          amount: number;
-          currency: CurrencyCode;
-          flow_at: string;
-          client_request_id: string;
-          notes: string | null;
-          is_reversed: boolean;
-          reversed_at: string | null;
-          reversal_reason: string | null;
-          reversal_client_request_id: string | null;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          id?: string;
-          portfolio_id: string;
-          flow_type: CashFlowType;
-          amount: number;
-          currency: CurrencyCode;
-          flow_at: string;
-          client_request_id: string;
-          notes?: string | null;
-          is_reversed?: boolean;
-          reversed_at?: string | null;
-          reversal_reason?: string | null;
-          reversal_client_request_id?: string | null;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Update: {
-          id?: string;
-          portfolio_id?: string;
-          flow_type?: CashFlowType;
-          amount?: number;
-          currency?: CurrencyCode;
-          flow_at?: string;
-          client_request_id?: string;
-          notes?: string | null;
-          is_reversed?: boolean;
-          reversed_at?: string | null;
-          reversal_reason?: string | null;
-          reversal_client_request_id?: string | null;
-          created_at?: string;
-          updated_at?: string;
-        };
-        Relationships: [];
-      };
-      portfolio_fifo_matches: {
-        Row: {
-          id: string;
-          portfolio_id: string;
-          instrument_id: string;
-          buy_transaction_id: string;
-          sell_transaction_id: string;
-          matched_quantity: number;
-          buy_unit_price: number;
-          sell_unit_price: number;
-          cost_basis: number;
-          proceeds: number;
-          realized_pnl: number;
-          currency: CurrencyCode;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          portfolio_id: string;
-          instrument_id: string;
-          buy_transaction_id: string;
-          sell_transaction_id: string;
-          matched_quantity: number;
-          buy_unit_price: number;
-          sell_unit_price: number;
-          cost_basis: number;
-          proceeds: number;
-          realized_pnl: number;
-          currency: CurrencyCode;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          portfolio_id?: string;
-          instrument_id?: string;
-          buy_transaction_id?: string;
-          sell_transaction_id?: string;
-          matched_quantity?: number;
-          buy_unit_price?: number;
-          sell_unit_price?: number;
-          cost_basis?: number;
-          proceeds?: number;
-          realized_pnl?: number;
-          currency?: CurrencyCode;
-          created_at?: string;
-        };
+      portfolio_snapshot_markets: {
+        Row: { snapshot_id: string; market: MarketType; holdings_value_base: number; unrealized_pnl_base: number; realized_pnl_base: number };
+        Insert: { snapshot_id: string; market: MarketType; holdings_value_base: number; unrealized_pnl_base: number; realized_pnl_base: number };
+        Update: { snapshot_id?: string; market?: MarketType; holdings_value_base?: number; unrealized_pnl_base?: number; realized_pnl_base?: number };
         Relationships: [];
       };
       portfolio_snapshots: {
         Row: {
+          usd_try_rate: number | null;
+          usd_try_rate_at: string | null;
+          captured_at: string | null;
+          market_breakdown_complete: boolean;
+          usd_try_rate_is_stale: boolean;
           id: string;
           portfolio_id: string;
           snapshot_date: string;
@@ -371,17 +279,18 @@ export interface Database {
           total_cost_base: number;
           realized_pnl_base: number;
           unrealized_pnl_base: number;
-          external_cash_flow_base: number;
-          net_contributions_base: number;
           absolute_pnl_base: number;
-          daily_return: number | null;
-          cumulative_twr: number | null;
           valuation_status: 'success' | 'partial';
           warnings: Json;
           calculation_version: number;
           created_at: string;
         };
         Insert: {
+          usd_try_rate?: number | null;
+          usd_try_rate_at?: string | null;
+          captured_at?: string | null;
+          market_breakdown_complete?: boolean;
+          usd_try_rate_is_stale?: boolean;
           id?: string;
           portfolio_id: string;
           snapshot_date: string;
@@ -392,17 +301,18 @@ export interface Database {
           total_cost_base: number;
           realized_pnl_base: number;
           unrealized_pnl_base: number;
-          external_cash_flow_base: number;
-          net_contributions_base: number;
           absolute_pnl_base: number;
-          daily_return?: number | null;
-          cumulative_twr?: number | null;
           valuation_status?: 'success' | 'partial';
           warnings?: Json;
           calculation_version?: number;
           created_at?: string;
         };
         Update: {
+          usd_try_rate?: number | null;
+          usd_try_rate_at?: string | null;
+          captured_at?: string | null;
+          market_breakdown_complete?: boolean;
+          usd_try_rate_is_stale?: boolean;
           id?: string;
           portfolio_id?: string;
           snapshot_date?: string;
@@ -413,11 +323,7 @@ export interface Database {
           total_cost_base?: number;
           realized_pnl_base?: number;
           unrealized_pnl_base?: number;
-          external_cash_flow_base?: number;
-          net_contributions_base?: number;
           absolute_pnl_base?: number;
-          daily_return?: number | null;
-          cumulative_twr?: number | null;
           valuation_status?: 'success' | 'partial';
           warnings?: Json;
           calculation_version?: number;
@@ -843,6 +749,14 @@ export interface Database {
       [_ in never]: never;
     };
     Functions: {
+      refresh_portfolio_chart: { Args: { p_portfolio_id: string }; Returns: Json };
+      get_portfolio_chart: {
+        Args: { p_portfolio_id: string; p_range: string; p_market: string; p_currency: string; p_metric: string };
+        Returns: { snapshot_date: string; value: number | null; calculation_version: number; is_partial: boolean; missing_fx: boolean; missing_market_pnl: boolean; captured_at: string | null; source_count: number }[];
+      };
+      get_portfolio_cash: { Args: { p_portfolio_id: string }; Returns: { try_balance: number; usd_balance: number } };
+      set_portfolio_cash: { Args: { p_portfolio_id: string; p_try_balance: number; p_usd_balance: number }; Returns: { try_balance: number; usd_balance: number } };
+      get_portfolio_realized_pnl: { Args: { p_portfolio_id: string }; Returns: { try_pnl: number; usd_pnl: number } };
       set_updated_at: {
         Args: Record<PropertyKey, never>;
         Returns: unknown;
@@ -873,15 +787,6 @@ export interface Database {
           unrealized_pnl: number | null;
         }[];
       };
-      get_portfolio_cash_balances: {
-        Args: {
-          p_portfolio_id: string;
-        };
-        Returns: {
-          currency: CurrencyCode;
-          balance: number;
-        }[];
-      };
       record_portfolio_transaction: {
         Args: {
           p_portfolio_id: string;
@@ -900,24 +805,6 @@ export interface Database {
           current_quantity: string;
           remaining_cost_basis: string;
           realized_pnl: string;
-          available_cash: string;
-        };
-      };
-      record_cash_flow: {
-        Args: {
-          p_portfolio_id: string;
-          p_flow_type: CashFlowType;
-          p_amount: number;
-          p_currency: CurrencyCode;
-          p_flow_at: string;
-          p_client_request_id: string;
-          p_notes?: string | null;
-        };
-        Returns: {
-          cash_flow_id: string;
-          was_replayed: boolean;
-          cash_balance: string;
-          currency: CurrencyCode;
         };
       };
       reverse_portfolio_transaction: {
@@ -934,53 +821,6 @@ export interface Database {
           realized_pnl: string;
         };
       };
-      reverse_cash_flow: {
-        Args: {
-          p_cash_flow_id: string;
-          p_client_request_id: string;
-          p_reason: string;
-        };
-        Returns: {
-          cash_flow_id: string;
-          was_replayed: boolean;
-          cash_balance: string;
-          currency: CurrencyCode;
-        };
-      };
-      initialize_portfolio_cash_accounts: {
-        Args: {
-          p_portfolio_id: string;
-          p_try_opening_balance: number;
-          p_usd_opening_balance: number;
-          p_client_request_id: string;
-        };
-        Returns: {
-          portfolio_id: string;
-          is_initialized: boolean;
-          balances: {
-            currency: CurrencyCode;
-            opening_balance: number;
-            current_balance: number;
-            initialized_at: string;
-          }[];
-          was_replayed: boolean;
-        };
-      };
-      get_portfolio_cash_state: {
-        Args: {
-          p_portfolio_id: string;
-        };
-        Returns: {
-          portfolio_id: string;
-          is_initialized: boolean;
-          balances: {
-            currency: CurrencyCode;
-            opening_balance: number | null;
-            current_balance: number | null;
-            initialized_at: string | null;
-          }[];
-        };
-      };
       reset_my_investments: {
         Args: {
           p_client_request_id: string;
@@ -991,8 +831,6 @@ export interface Database {
           reset_at: string;
           portfolio_count: number;
           deleted_transaction_count: number;
-          deleted_cash_flow_count: number;
-          deleted_fifo_match_count: number;
           deleted_instrument_count: number;
           deleted_snapshot_count: number;
           deleted_snapshot_position_count: number;
@@ -1077,17 +915,17 @@ export interface Database {
         Args: {
           p_portfolio_id: string;
           p_limit?: number;
-          p_filter?: 'ALL' | 'BUY' | 'SELL' | 'DEPOSIT' | 'WITHDRAWAL';
+          p_filter?: 'ALL' | 'BUY' | 'SELL';
           p_search?: string | null;
           p_before_occurred_at?: string | null;
           p_before_created_at?: string | null;
-          p_before_source_kind?: 'TRANSACTION' | 'CASH_FLOW' | null;
+          p_before_source_kind?: 'TRANSACTION' | null;
           p_before_activity_id?: string | null;
         };
         Returns: {
           activity_id: string;
-          source_kind: 'TRANSACTION' | 'CASH_FLOW';
-          activity_type: 'BUY' | 'SELL' | 'DEPOSIT' | 'WITHDRAWAL';
+          source_kind: 'TRANSACTION';
+          activity_type: 'BUY' | 'SELL';
           portfolio_id: string;
           instrument_id: string | null;
           symbol: string | null;
@@ -1123,8 +961,6 @@ export type Portfolio = Database['public']['Tables']['portfolios']['Row'];
 export type PortfolioCashAccount = Database['public']['Tables']['portfolio_cash_accounts']['Row'];
 export type PortfolioInstrument = Database['public']['Tables']['portfolio_instruments']['Row'];
 export type PortfolioTransaction = Database['public']['Tables']['portfolio_transactions']['Row'];
-export type PortfolioCashFlow = Database['public']['Tables']['portfolio_cash_flows']['Row'];
-export type PortfolioFifoMatch = Database['public']['Tables']['portfolio_fifo_matches']['Row'];
 export type PortfolioSnapshot = Database['public']['Tables']['portfolio_snapshots']['Row'];
 export type PortfolioSnapshotPosition = Database['public']['Tables']['portfolio_snapshot_positions']['Row'];
 export type KapMemberMapping = Database['public']['Tables']['kap_member_mappings']['Row'];
@@ -1137,31 +973,27 @@ export type UserWatchlistItem = Database['public']['Tables']['user_watchlist_ite
 
 // RPC Domain Return Types
 export type PortfolioPosition = Database['public']['Functions']['get_portfolio_positions']['Returns'][number];
-export type PortfolioCashBalance = Database['public']['Functions']['get_portfolio_cash_balances']['Returns'][number];
 export type TransactionRecordResult = Database['public']['Functions']['record_portfolio_transaction']['Returns'];
-export type CashFlowRecordResult = Database['public']['Functions']['record_cash_flow']['Returns'];
 export type ResetInvestmentsResult = Database['public']['Functions']['reset_my_investments']['Returns'];
-export type InitializeCashAccountsResult = Database['public']['Functions']['initialize_portfolio_cash_accounts']['Returns'];
-export type GetCashStateResult = Database['public']['Functions']['get_portfolio_cash_state']['Returns'];
 export type SystemHealthRpcItem = Database['public']['Functions']['get_mobile_system_health']['Returns'][number];
 export type WatchlistRpcItem = Database['public']['Functions']['get_my_watchlist']['Returns'][number];
 export type SetWatchlistItemRpcResult = Database['public']['Functions']['set_my_watchlist_item']['Returns'][number];
 export type PortfolioActivityRpcItem = Database['public']['Functions']['get_my_portfolio_activity']['Returns'][number];
 
-export interface PortfolioCashAccountBalance {
-  currency: CurrencyCode;
-  openingBalance: number | null;
-  currentBalance: number | null;
-  initializedAt: string | null;
+/** Optional manual balances. Trades never change these values. */
+export interface PortfolioCash {
+  tryBalance: number;
+  usdBalance: number;
 }
 
-export interface PortfolioCashState {
-  portfolioId: string;
-  isInitialized: boolean;
-  balances: PortfolioCashAccountBalance[];
-}
 
 // Generic helper utilities
 export type Tables<T extends keyof Database['public']['Tables']> = Database['public']['Tables'][T]['Row'];
 export type TablesInsert<T extends keyof Database['public']['Tables']> = Database['public']['Tables'][T]['Insert'];
 export type TablesUpdate<T extends keyof Database['public']['Tables']> = Database['public']['Tables'][T]['Update'];
+
+/** Sale profit in instrument currencies, including fully closed positions. */
+export interface PortfolioRealizedPnl {
+  tryPnl: number;
+  usdPnl: number;
+}

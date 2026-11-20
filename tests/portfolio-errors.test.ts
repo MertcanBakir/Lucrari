@@ -20,22 +20,6 @@ import { getSupabaseClient } from '../services/supabase/client';
 describe('Portfolio Error Formatter & Classifier', () => {
   it('should format domain-specific PostgreSQL RPC errors into localized Turkish', () => {
     assert.strictEqual(
-      formatPortfolioRpcError({ message: 'portfolio_insufficient_cash' }),
-      'Yetersiz nakit bakiyesi. Lütfen nakit tutarınızı kontrol edin veya para yatırın.'
-    );
-    assert.strictEqual(
-      formatPortfolioRpcError({ message: 'portfolio_cash_account_not_initialized' }),
-      'Nakit hesabı henüz kurulmamış. Lütfen önce nakit bakiyenizi kurun.'
-    );
-    assert.strictEqual(
-      formatPortfolioRpcError({ message: 'portfolio_cash_account_already_initialized' }),
-      'Bu portföy için nakit hesapları zaten başlatılmış.'
-    );
-    assert.strictEqual(
-      formatPortfolioRpcError({ message: 'portfolio_cash_invariant_violation' }),
-      'Nakit bakiyesi negatif olamaz. İşlem finansal güvenlik kuralları gereği iptal edildi.'
-    );
-    assert.strictEqual(
       formatPortfolioRpcError({ message: 'portfolio_idempotency_conflict' }),
       'Bu işlem daha önce farklı parametrelerle gönderildi. Lütfen sayfayı yenileyip tekrar deneyin.'
     );
@@ -48,10 +32,6 @@ describe('Portfolio Error Formatter & Classifier', () => {
       'İşlem para birimi ile varlık para birimi uyuşmuyor.'
     );
     assert.strictEqual(
-      formatPortfolioRpcError({ message: 'portfolio_insufficient_cash_for_reversal' }),
-      'Geri alma işlemi nakit bakiyesini negatife düşüreceği için gerçekleştirilemedi.'
-    );
-    assert.strictEqual(
       formatPortfolioRpcError({ message: 'portfolio_insufficient_position_for_reversal' }),
       'Geri alma işlemi pozisyon miktarını negatife düşüreceği için gerçekleştirilemedi.'
     );
@@ -62,10 +42,6 @@ describe('Portfolio Error Formatter & Classifier', () => {
     assert.strictEqual(
       formatPortfolioRpcError({ message: 'portfolio_transaction_already_reversed' }),
       'Bu işlem zaten geri alınmış.'
-    );
-    assert.strictEqual(
-      formatPortfolioRpcError({ message: 'portfolio_cash_flow_already_reversed' }),
-      'Bu nakit hareketi zaten geri alınmış.'
     );
     assert.strictEqual(
       formatPortfolioRpcError({ code: 'PGRST202' }),
@@ -108,13 +84,13 @@ describe('Portfolio Error Formatter & Classifier', () => {
     });
 
     it('should create a PortfolioOperationError with isRetryable=false for domain/auth errors', () => {
-      const rawError = { message: 'portfolio_insufficient_cash', code: 'P0001' };
+      const rawError = { message: 'portfolio_invalid_cash_amount', code: 'P0001' };
       const opError = createPortfolioOperationError('İşlem kaydedilemedi', rawError);
 
       assert.ok(opError instanceof PortfolioOperationError);
       assert.strictEqual(opError.isRetryable, false);
       assert.strictEqual(opError.code, 'P0001');
-      assert.strictEqual(opError.message, 'İşlem kaydedilemedi: Yetersiz nakit bakiyesi. Lütfen nakit tutarınızı kontrol edin veya para yatırın.');
+      assert.strictEqual(opError.message, 'İşlem kaydedilemedi: Nakit tutarı sıfır veya pozitif bir sayı olmalıdır.');
     });
   });
 
@@ -131,7 +107,7 @@ describe('Portfolio Error Formatter & Classifier', () => {
       assert.strictEqual(isRetryablePortfolioTransportError({ code: 'PGRST202', message: 'Could not find function' }), false);
       assert.strictEqual(isRetryablePortfolioTransportError({ message: 'JWT expired' }), false);
       assert.strictEqual(isRetryablePortfolioTransportError({ message: 'portfolio_idempotency_conflict' }), false);
-      assert.strictEqual(isRetryablePortfolioTransportError({ message: 'portfolio_insufficient_cash' }), false);
+      assert.strictEqual(isRetryablePortfolioTransportError({ message: 'portfolio_invalid_cash_amount' }), false);
       assert.strictEqual(isRetryablePortfolioTransportError({ message: 'portfolio_cash_account_not_initialized' }), false);
       assert.strictEqual(isRetryablePortfolioTransportError(null), false);
       assert.strictEqual(isRetryablePortfolioTransportError(undefined), false);

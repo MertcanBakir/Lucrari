@@ -42,7 +42,9 @@ export function clearFxRateCache(): void {
  */
 export async function fetchUsdTryRate(_options?: { forceRefresh?: boolean }): Promise<FxRateInfo> {
   if (inFlightFxFetch) {
-    log.debug('Eşzamanlı USD/TRY kur isteği birleştirildi (deduplication)');
+    log.debug('fx.request.deduplicated', {
+      message: 'Fx request deduplicated.'
+    });
     return inFlightFxFetch;
   }
 
@@ -68,7 +70,10 @@ export async function fetchUsdTryRate(_options?: { forceRefresh?: boolean }): Pr
         .maybeSingle();
 
       if (error) {
-        log.warn('USD/TRY kuru Supabase sorgusundan alınamadı', { error: error.message });
+        log.warn('fx.query.failed', {
+          message: 'Fx query failed.',
+          error: error
+        });
         if (lastKnownFxRateInfo && lastKnownFxRateInfo.rate !== null) {
           return {
             ...lastKnownFxRateInfo,
@@ -88,7 +93,9 @@ export async function fetchUsdTryRate(_options?: { forceRefresh?: boolean }): Pr
       }
 
       if (!data) {
-        log.warn('USDTRY enstrüman kaydı instruments tablosunda bulunamadı');
+        log.warn('fx.instrument.missing', {
+          message: 'Fx instrument missing.'
+        });
         if (lastKnownFxRateInfo && lastKnownFxRateInfo.rate !== null) {
           return {
             ...lastKnownFxRateInfo,
@@ -115,7 +122,10 @@ export async function fetchUsdTryRate(_options?: { forceRefresh?: boolean }): Pr
       const numPrice = Number(rawPrice);
 
       if (!Number.isFinite(numPrice) || numPrice <= 0) {
-        log.warn('USDTRY için geçerli pozitif bir fiyat bulunamadı', { rawPrice });
+        log.warn('fx.price.invalid', {
+          message: 'Fx price invalid.',
+          context: { rawPrice }
+        });
         if (lastKnownFxRateInfo && lastKnownFxRateInfo.rate !== null) {
           return {
             ...lastKnownFxRateInfo,
@@ -144,11 +154,16 @@ export async function fetchUsdTryRate(_options?: { forceRefresh?: boolean }): Pr
       };
 
       lastKnownFxRateInfo = result;
-      log.info('Canlı USD/TRY kuru başarıyla alındı', { rate: numPrice, isStale: result.isStale });
+      log.debug('fx.rate.loaded', {
+        message: 'Fx rate loaded.',
+        context: { rate: numPrice, isStale: result.isStale }
+      });
       return result;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.error('fetchUsdTryRate istisnası', { error: msg });
+        log.error('fx.load.failed', {
+        message: 'Fx load failed.',
+        error: err
+      });
 
       if (lastKnownFxRateInfo && lastKnownFxRateInfo.rate !== null) {
         return {
