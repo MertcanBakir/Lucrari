@@ -264,7 +264,7 @@ function normalizeEffectiveConfig(raw: unknown): AnalysisEffectiveConfig | null 
     !Number.isInteger(raw.risk_rounds) ||
     Number(raw.risk_rounds) < 0 ||
     !Array.isArray(analysts) ||
-    analysts.some((code) => !ANALYST_CODES.includes(code as (typeof ANALYST_CODES)[number])) ||
+    analysts.some((code) => code !== 'social' && !ANALYST_CODES.includes(code as (typeof ANALYST_CODES)[number])) ||
     !ANALYSIS_LANGUAGES.includes(language as (typeof ANALYSIS_LANGUAGES)[number])
   ) {
     return null;

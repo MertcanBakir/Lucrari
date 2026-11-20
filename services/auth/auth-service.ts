@@ -95,7 +95,9 @@ export function sanitizeAuthError(err: unknown): string {
 export async function ensureAnonymousSession(options?: { forceNew?: boolean }): Promise<AuthBootstrapResult> {
   // If an auth bootstrap operation is already running, return the existing in-flight promise
   if (inFlightAuthPromise && !options?.forceNew) {
-    log.debug('Eşzamanlı auth çağrısı mevcut promise ile birleştirildi');
+    log.debug('auth.bootstrap.deduplicated', {
+      message: 'Auth bootstrap deduplicated.'
+    });
     return inFlightAuthPromise;
   }
 
@@ -108,15 +110,16 @@ export async function ensureAnonymousSession(options?: { forceNew?: boolean }): 
         const { data: sessionData, error: sessionError } = await client.auth.getSession();
         
         if (sessionError) {
-          log.warn('Mevcut oturum kontrol edilirken uyarı alındı', {
-            error: sanitizeAuthError(sessionError),
+          log.warn('auth.session.lookup.failed', {
+            message: 'Auth session lookup failed.',
+            error: sanitizeAuthError(sessionError)
           });
         }
 
         if (sessionData?.session?.user) {
-          log.info('Mevcut oturum doğrulandı ve korundu', {
-            userId: sessionData.session.user.id,
-            isAnonymous: sessionData.session.user.is_anonymous ?? true,
+          log.debug('auth.session.reused', {
+            message: 'Auth session reused.',
+            context: { userId: sessionData.session.user.id, isAnonymous: sessionData.session.user.is_anonymous ?? true }
           });
 
           return {
@@ -129,13 +132,18 @@ export async function ensureAnonymousSession(options?: { forceNew?: boolean }): 
       }
 
       // 2. No active session found — perform anonymous sign-in
-      log.info('Aktif oturum bulunamadı, yeni anonim oturum başlatılıyor...');
+      log.info('auth.anonymous.started', {
+        message: 'Auth anonymous started.'
+      });
 
       const { data, error } = await client.auth.signInAnonymously();
 
       if (error) {
         const sanitizedMsg = sanitizeAuthError(error);
-        log.error('Anonim oturum oluşturulamadı', { error: sanitizedMsg });
+        log.error('auth.anonymous.failed', {
+          message: 'Auth anonymous failed.',
+          error
+        });
 
         return {
           session: null,
@@ -147,7 +155,9 @@ export async function ensureAnonymousSession(options?: { forceNew?: boolean }): 
 
       if (!data?.session || !data?.user) {
         const errMsg = 'Anonim oturum yanıtında kullanıcı bilgisi eksik.';
-        log.error(errMsg);
+        log.error('auth.anonymous.invalid', {
+          message: 'Auth anonymous invalid.'
+        });
         return {
           session: null,
           user: null,
@@ -156,8 +166,9 @@ export async function ensureAnonymousSession(options?: { forceNew?: boolean }): 
         };
       }
 
-      log.info('Yeni anonim kullanıcı başarıyla oluşturuldu', {
-        userId: data.user.id,
+      log.info('auth.anonymous.created', {
+        message: 'Auth anonymous created.',
+        context: { userId: data.user.id }
       });
 
       return {
@@ -168,7 +179,10 @@ export async function ensureAnonymousSession(options?: { forceNew?: boolean }): 
       };
     } catch (unexpectedError) {
       const sanitizedMsg = sanitizeAuthError(unexpectedError);
-      log.error('Beklenmeyen anonim auth istisnası', { error: sanitizedMsg });
+      log.error('auth.bootstrap.exception', {
+        message: 'Auth bootstrap exception.',
+        error: unexpectedError
+      });
 
       return {
         session: null,
@@ -194,7 +208,10 @@ export async function getCurrentSession(): Promise<Session | null> {
     const { data } = await client.auth.getSession();
     return data.session;
   } catch (error) {
-    log.warn('Oturum alınırken hata', { error: sanitizeAuthError(error) });
+    log.warn('auth.session.read.failed', {
+      message: 'Auth session read failed.',
+      error: sanitizeAuthError(error)
+    });
     return null;
   }
 }
@@ -208,7 +225,10 @@ export async function getCurrentUser(): Promise<User | null> {
     const { data } = await client.auth.getUser();
     return data.user;
   } catch (error) {
-    log.warn('Kullanıcı alınırken hata', { error: sanitizeAuthError(error) });
+    log.warn('auth.user.read.failed', {
+      message: 'Auth user read failed.',
+      error: sanitizeAuthError(error)
+    });
     return null;
   }
 }
@@ -222,7 +242,10 @@ export function onAuthStateChange(
   try {
     const client = getSupabaseClient();
     const { data } = client.auth.onAuthStateChange((event, session) => {
-      log.debug('Auth state changed event', { event, hasSession: Boolean(session) });
+      log.debug('auth.state.changed', {
+        message: 'Auth state changed.',
+        context: { event, hasSession: Boolean(session) }
+      });
       callback(event, session);
     });
 
@@ -232,7 +255,10 @@ export function onAuthStateChange(
       },
     };
   } catch (error) {
-    log.warn('Auth state dinleyicisi eklenemedi', { error: sanitizeAuthError(error) });
+    log.warn('auth.subscription.failed', {
+      message: 'Auth subscription failed.',
+      error: sanitizeAuthError(error)
+    });
     return {
       unsubscribe: () => {},
     };
@@ -246,10 +272,15 @@ export function onAuthStateChange(
 export async function resetAccountSession(): Promise<AuthBootstrapResult> {
   const client = getSupabaseClient();
   try {
-    log.info('Kullanıcı hesabı sıfırlanıyor (Sign Out & Fresh Anonymous Session)...');
+    log.info('auth.reset.started', {
+      message: 'Auth reset started.'
+    });
     await client.auth.signOut();
   } catch (err) {
-    log.warn('SignOut sırasında uyarı', { error: sanitizeAuthError(err) });
+    log.warn('auth.signout.failed', {
+      message: 'Auth signout failed.',
+      error: sanitizeAuthError(err)
+    });
   }
 
   return await ensureAnonymousSession({ forceNew: true });

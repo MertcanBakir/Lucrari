@@ -99,7 +99,10 @@ function notifyWatchlistSubscribers(event: WatchlistChangeEvent): void {
     try {
       listener(event);
     } catch (err) {
-      log.error('Watchlist listener execution failed', { error: String(err) });
+      log.error('watchlist.listener.failed', {
+        message: 'Watchlist listener failed.',
+        error: err
+      });
     }
   }
 }
@@ -177,7 +180,9 @@ export async function fetchWatchlistPage(
   // 1. Ensure authenticated user
   const authResult = await ensureAnonymousSession();
   if (!authResult.user || !authResult.user.id) {
-    log.error('Watchlist oturum doğrulanamadı');
+    log.error('watchlist.session.missing', {
+      message: 'Watchlist session missing.'
+    });
     throw new WatchlistOperationError('İzleme listesini görüntülemek için oturum açılması gerekmektedir.');
   }
 
@@ -188,14 +193,20 @@ export async function fetchWatchlistPage(
   // 2. Check fresh cache
   const cached = pageCacheByUserId.get(cacheKey);
   if (!forceRefresh && cached && !cached.isStale && now - cached.timestamp < WATCHLIST_CACHE_TTL_MS) {
-    log.debug('Watchlist sayfa önbellek isabeti', { userId, limit, offset });
+    log.debug('watchlist.cache.hit', {
+      message: 'Watchlist cache hit.',
+      context: { userId, limit, offset }
+    });
     return cached;
   }
 
   // 3. Deduplicate in-flight request
   const existingInFlight = inFlightPageRequests.get(cacheKey);
   if (existingInFlight) {
-    log.debug('Eşzamanlı watchlist sayfa isteği birleştirildi', { userId, limit, offset });
+    log.debug('watchlist.request.deduplicated', {
+      message: 'Watchlist request deduplicated.',
+      context: { userId, limit, offset }
+    });
     return existingInFlight.promise;
   }
 
@@ -211,7 +222,11 @@ export async function fetchWatchlistPage(
       });
 
       if (error) {
-        log.warn('get_my_watchlist RPC hatası', { error: error.message, userId, limit, offset });
+        log.warn('watchlist.page.rpc.failed', {
+          message: 'Watchlist page rpc failed.',
+          context: { userId, limit, offset },
+          error: error
+        });
         throw createWatchlistOperationError(formatWatchlistRpcError(error), error);
       }
 
@@ -221,19 +236,19 @@ export async function fetchWatchlistPage(
 
       const normalized = normalizeWatchlistPage(data, limit, offset, userId);
       if (!normalized) {
-        log.error('get_my_watchlist RPC cevabı sözleşmeye uymuyor', { data, userId, limit, offset });
+        log.error('watchlist.page.invalid', {
+          message: 'Watchlist page invalid.',
+          context: { userId, limit, offset }
+        });
         throw createWatchlistOperationError('İzleme listesi yanıtı doğrulanamadı.');
       }
 
       pageCacheByUserId.set(cacheKey, normalized);
       notifyWatchlistSubscribers({ userId, refreshedPage: normalized });
 
-      log.info('Watchlist sayfası başarıyla yüklendi', {
-        userId,
-        limit,
-        offset,
-        totalCount: normalized.totalCount,
-        loadedCount: normalized.items.length,
+      log.debug('watchlist.page.loaded', {
+        message: 'Watchlist page loaded.',
+        context: { userId, limit, offset, totalCount: normalized.totalCount, loadedCount: normalized.items.length }
       });
 
       return normalized;
@@ -244,7 +259,11 @@ export async function fetchWatchlistPage(
         throw err;
       }
 
-      log.error('Watchlist sayfası alınırken hata oluştu', { userId, limit, offset, error: String(err) });
+      log.error('watchlist.page.failed', {
+        message: 'Watchlist page failed.',
+        context: { userId, limit, offset },
+        error: err
+      });
 
       // Retain previous page as stale if available for the exact same user
       if (cached) {
@@ -428,11 +447,9 @@ export async function fetchAllWatchedInstrumentIds(forceRefresh = false): Promis
           // Revision validation after complete batch collection
           const endRevision = getMembershipRevision(userId);
           if (startRevision !== endRevision) {
-            log.info('Üyelik sorgusu tamamlandığında mutasyon gerçekleşti (revision mismatch), yeniden deneniyor', {
-              userId,
-              attempt,
-              startRevision,
-              endRevision,
+            log.debug('watchlist.membership.revision.retry', {
+              message: 'Watchlist membership revision retry.',
+              context: { userId, attempt, startRevision, endRevision }
             });
 
             if (attempt < MAX_MEMBERSHIP_ATTEMPTS) {
@@ -442,7 +459,10 @@ export async function fetchAllWatchedInstrumentIds(forceRefresh = false): Promis
             // Reached max attempts due to continuous mutations
             const existingCached = membershipCacheByUserId.get(userId);
             if (existingCached) {
-              log.warn('Maksimum üyelik deneme sayısına ulaşıldı, mevcut önbellek stale olarak korunuyor', { userId });
+              log.warn('watchlist.membership.revision.exhausted', {
+                message: 'Watchlist membership revision exhausted.',
+                context: { userId }
+              });
               const staleCached: WatchlistMembershipResult = {
                 userId: existingCached.userId,
                 instrumentIds: new Set(existingCached.instrumentIds),
@@ -476,12 +496,10 @@ export async function fetchAllWatchedInstrumentIds(forceRefresh = false): Promis
           // Error occurred during batch collection (e.g. total_count drift, short-page mismatch, early empty)
           const currentRevision = getMembershipRevision(userId);
           if (currentRevision !== startRevision) {
-            log.info('Sayfalama sırasında mutasyon kaynaklı tutarsızlık/hata oluştu (revision changed), yeni deneme başlatılıyor', {
-              userId,
-              attempt,
-              startRevision,
-              currentRevision,
-              error: String(attemptErr),
+            log.debug('watchlist.page.revision.retry', {
+              message: 'Watchlist page revision retry.',
+              context: { userId, attempt, startRevision, currentRevision },
+              error: attemptErr
             });
 
             if (attempt < MAX_MEMBERSHIP_ATTEMPTS) {
@@ -491,7 +509,10 @@ export async function fetchAllWatchedInstrumentIds(forceRefresh = false): Promis
             // Reached max attempts due to continuous mutations
             const existingCached = membershipCacheByUserId.get(userId);
             if (existingCached) {
-              log.warn('Maksimum üyelik deneme sayısına ulaşıldı, mevcut önbellek stale olarak korunuyor', { userId });
+              log.warn('watchlist.page.revision.exhausted', {
+                message: 'Watchlist page revision exhausted.',
+                context: { userId }
+              });
               const staleCached: WatchlistMembershipResult = {
                 userId: existingCached.userId,
                 instrumentIds: new Set(existingCached.instrumentIds),
@@ -515,7 +536,11 @@ export async function fetchAllWatchedInstrumentIds(forceRefresh = false): Promis
     } catch (err) {
       const existingCached = membershipCacheByUserId.get(userId);
       if (existingCached) {
-        log.warn('Üyelik yenilemesi başarısız oldu, eski üyelik stale olarak dönülüyor', { userId, error: String(err) });
+        log.warn('watchlist.membership.cache.stale', {
+          message: 'Watchlist membership cache stale.',
+          context: { userId },
+          error: err
+        });
         const staleCached: WatchlistMembershipResult = {
           userId: existingCached.userId,
           instrumentIds: new Set(existingCached.instrumentIds),
@@ -579,13 +604,20 @@ export async function setWatchlistItem(
       });
 
       if (error) {
-        log.error('set_my_watchlist_item RPC hatası', { error: error.message, instrumentId, isWatched: intentToRun, userId });
+        log.error('watchlist.mutation.rpc.failed', {
+          message: 'Watchlist mutation rpc failed.',
+          context: { instrumentId, isWatched: intentToRun, userId },
+          error: error
+        });
         throw createWatchlistOperationError(formatWatchlistRpcError(error), error);
       }
 
       const normalized = normalizeSetWatchlistItemRpcResult(data, instrumentId, intentToRun);
       if (!normalized) {
-        log.error('set_my_watchlist_item RPC cevabı sözleşmeye uymuyor', { data, instrumentId, isWatched: intentToRun, userId });
+        log.error('watchlist.mutation.invalid', {
+          message: 'Watchlist mutation invalid.',
+          context: { instrumentId, isWatched: intentToRun, userId }
+        });
         throw createWatchlistOperationError('İzleme listesi yanıtı doğrulanamadı.');
       }
 
@@ -621,11 +653,9 @@ export async function setWatchlistItem(
         },
       });
 
-      log.info('İzleme listesi öğesi başarıyla güncellendi', {
-        userId,
-        instrumentId,
-        isWatched: intentToRun,
-        wasChanged: normalized.wasChanged,
+      log.info('watchlist.mutation.completed', {
+        message: 'Watchlist mutation completed.',
+        context: { userId, instrumentId, isWatched: intentToRun, wasChanged: normalized.wasChanged }
       });
 
       return normalized;

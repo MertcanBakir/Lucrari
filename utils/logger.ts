@@ -1,231 +1,144 @@
-/**
- * Centralized Application Logger
- * 
- * Provides leveled, structured, and scoped logging with automatic sanitization
- * of sensitive credentials, compact 1-line terminal output, and an in-memory buffer.
- */
-
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+export type LogEvent = `${string}.${string}`;
+
+export interface LogOptions {
+  message: string;
+  context?: Record<string, unknown>;
+  error?: unknown;
+}
+
+export interface LogError {
+  name: string;
+  message: string;
+  code: string | null;
+  stack: string | null;
+}
 
 export interface LogEntry {
-  timestamp: string; // ISO 8601
+  timestamp: string;
   level: LogLevel;
   scope: string;
+  event: string;
   message: string;
-  metadata?: Record<string, unknown> | null;
-  error?: Error | unknown | null;
+  context: Record<string, unknown>;
+  error: LogError | null;
 }
 
 export interface ScopedLogger {
-  debug: (message: string, metadata?: Record<string, unknown>) => void;
-  info: (message: string, metadata?: Record<string, unknown>) => void;
-  warn: (message: string, metadataOrError?: Record<string, unknown> | unknown) => void;
-  error: (message: string, error?: unknown, metadata?: Record<string, unknown>) => void;
+  debug: (event: LogEvent, options: LogOptions) => void;
+  info: (event: LogEvent, options: LogOptions) => void;
+  warn: (event: LogEvent, options: LogOptions) => void;
+  error: (event: LogEvent, options: LogOptions) => void;
 }
 
-const LOG_LEVEL_SEVERITY: Record<LogLevel, number> = {
-  debug: 0,
-  info: 1,
-  warn: 2,
-  error: 3,
-};
+const SEVERITY: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
+const REDACTED = '[REDACTED]';
+const PRIVATE_FIELDS = new Set([
+  'password', 'passwd', 'secret', 'clientsecret', 'apikey', 'key',
+  'token', 'accesstoken', 'refreshtoken', 'usertoken', 'authorization',
+  'cookie', 'setcookie', 'anonkey', 'publishablekey', 'servicerolekey',
+  'email', 'phone', 'address', 'name', 'username', 'fullname', 'user', 'title', 'notes',
+  'body', 'payload', 'data', 'params', 'credentials', 'idempotencykey', 'clientrequestid',
+]);
 
-const SENSITIVE_KEY_PATTERNS = [
-  /key/i,
-  /secret/i,
-  /token/i,
-  /password/i,
-  /authorization/i,
-  /auth/i,
-  /apikey/i,
-  /anon/i,
-  /service_role/i,
-];
-
-// Maximum log entries kept in memory buffer
-const MAX_LOG_BUFFER_SIZE = 100;
-
-/**
- * Formats metadata into a clean, compact single-line string (e.g. " • events=39, days=17")
- */
-function formatCompactMetadata(metadata?: Record<string, unknown> | null): string {
-  if (!metadata || Object.keys(metadata).length === 0) return '';
-  const entries = Object.entries(metadata)
-    .filter(([_, v]) => v !== undefined && v !== null && v !== false)
-    .map(([k, v]) => {
-      if (typeof v === 'string') {
-        const shortVal = v.length > 20 ? `${v.slice(0, 12)}..` : v;
-        return `${k}=${shortVal}`;
-      }
-      return `${k}=${v}`;
-    });
-
-  return entries.length > 0 ? ` • ${entries.join(', ')}` : '';
+function sanitizeText(value: string): string {
+  return value
+    .replace(/\bBearer\s+[^\s"',;]+/gi, 'Bearer [REDACTED]')
+    .replace(/\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?/g, REDACTED)
+    .replace(/\b(?:sb_(?:secret|publishable)_|sbp_|sk-)[A-Za-z0-9_-]+/g, REDACTED)
+    .replace(/((?:password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|cookie|set-cookie|token)\s*["']?\s*[:=]\s*["']?)[^\s&"',;}]+/gi, '$1[REDACTED]')
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, REDACTED);
 }
 
-function formatErrorMessage(err: unknown): string | null {
-  if (!err) return null;
-  if (err instanceof Error) return err.message;
-  if (typeof err === 'string') return err;
-  if (typeof err === 'object' && err !== null) {
-    if ('message' in err && typeof (err as any).message === 'string') {
-      return (err as any).message;
-    }
-    if ('error' in err) {
-      return formatErrorMessage((err as any).error);
-    }
-    try {
-      return JSON.stringify(err);
-    } catch {
-      return String(err);
-    }
+function sanitizeValue(value: unknown, ancestors = new Set<object>(), depth = 0): unknown {
+  if (typeof value === 'string') return sanitizeText(value);
+  if (typeof value === 'bigint') return String(value);
+  if (typeof value !== 'object' || value === null) {
+    return typeof value === 'function' || typeof value === 'symbol' ? '[Unsupported]' : value;
   }
-  return String(err);
+  if (ancestors.has(value)) return '[Circular]';
+  if (depth >= 8) return '[MaxDepth]';
+  ancestors.add(value);
+  let result: unknown;
+  if (Array.isArray(value)) {
+    result = value.map((item) => sanitizeValue(item, ancestors, depth + 1));
+  } else {
+    const entries = Object.entries(value).map(([key, item]) => {
+      const normalized = key.replace(/[^a-z0-9]/gi, '').toLowerCase();
+      const privateField = PRIVATE_FIELDS.has(normalized) || normalized.endsWith('userid');
+      return [key, privateField ? REDACTED : sanitizeValue(item, ancestors, depth + 1)];
+    });
+    result = Object.fromEntries(entries);
+  }
+  ancestors.delete(value);
+  return result;
+}
+
+function normalizeError(error: unknown): LogError | null {
+  if (error === undefined || error === null) return null;
+  const details = typeof error === 'object' ? error as Record<string, unknown> : {};
+  return {
+    name: typeof details.name === 'string' ? sanitizeText(details.name) : 'Error',
+    message: sanitizeText(typeof details.message === 'string' ? details.message : String(error)),
+    code: typeof details.code === 'string' ? sanitizeText(details.code) : null,
+    stack: typeof details.stack === 'string' ? sanitizeText(details.stack) : null,
+  };
 }
 
 class AppLogger {
   private minLevel: LogLevel = typeof __DEV__ !== 'undefined' && __DEV__ ? 'debug' : 'info';
   private logBuffer: LogEntry[] = [];
-  private isSilent: boolean = false;
+  private isSilent = false;
 
-  /**
-   * Sets minimum log level to output to console
-   */
-  public setMinLevel(level: LogLevel): void {
-    this.minLevel = level;
-  }
+  public setMinLevel(level: LogLevel): void { this.minLevel = level; }
+  public setSilent(silent: boolean): void { this.isSilent = silent; }
+  public sanitize(data: unknown): unknown { return sanitizeValue(data); }
 
-  /**
-   * Disables console output (useful during unit tests)
-   */
-  public setSilent(silent: boolean): void {
-    this.isSilent = silent;
-  }
-
-  /**
-   * Sanitizes objects and primitives to prevent credential leakage
-   */
-  public sanitize(data: unknown): unknown {
-    if (data === null || data === undefined) return data;
-    if (typeof data !== 'object') {
-      if (typeof data === 'string' && data.length > 30 && (data.includes('eyJ') || data.startsWith('sbp_'))) {
-        return `${data.slice(0, 6)}...***`;
-      }
-      return data;
-    }
-
-    if (Array.isArray(data)) {
-      return data.map((item) => this.sanitize(item));
-    }
-
-    const sanitizedObj: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
-      const isSensitive = SENSITIVE_KEY_PATTERNS.some((pattern) => pattern.test(k));
-      if (isSensitive) {
-        sanitizedObj[k] = typeof v === 'string' && v.length > 0 ? `${v.slice(0, 4)}...***` : '***';
-      } else {
-        sanitizedObj[k] = this.sanitize(v);
-      }
-    }
-    return sanitizedObj;
-  }
-
-  private log(
-    level: LogLevel,
-    scope: string,
-    message: string,
-    metadata?: Record<string, unknown> | null,
-    error?: unknown
-  ): void {
-    const errorStr = formatErrorMessage(error);
+  private log(level: LogLevel, scope: string, event: LogEvent, options: LogOptions): void {
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
-      scope,
-      message,
-      metadata: metadata ? (this.sanitize(metadata) as Record<string, unknown>) : null,
-      error: error ? (error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : errorStr) : null,
+      scope: sanitizeText(scope),
+      event: sanitizeText(event),
+      message: sanitizeText(options.message),
+      context: sanitizeValue(options.context ?? {}) as Record<string, unknown>,
+      error: normalizeError(options.error),
     };
-
-    // Store in memory ring buffer
+    // Keep diagnostics in memory even when console output is filtered or silenced.
     this.logBuffer.push(entry);
-    if (this.logBuffer.length > MAX_LOG_BUFFER_SIZE) {
-      this.logBuffer.shift();
-    }
+    if (this.logBuffer.length > 100) this.logBuffer.shift();
+    if (this.isSilent || SEVERITY[level] < SEVERITY[this.minLevel]) return;
 
-    // Check level gate
-    if (LOG_LEVEL_SEVERITY[level] < LOG_LEVEL_SEVERITY[this.minLevel]) {
-      return;
-    }
-
-    if (this.isSilent) {
-      return;
-    }
-
-    // Compact single-line console output
-    const metaSuffix = formatCompactMetadata(entry.metadata);
-    const line = `[${scope}] ${message}${metaSuffix}`;
-
-    switch (level) {
-      case 'debug':
-        console.debug(line);
-        break;
-      case 'info':
-        console.log(line);
-        break;
-      case 'warn':
-        console.warn(line, errorStr ? `• Error: ${errorStr}` : '');
-        break;
-      case 'error':
-        console.error(line, errorStr ? `• Error: ${errorStr}` : '');
-        break;
-    }
+    const context = JSON.stringify(entry.context);
+    const failure = entry.error ? ` error=${JSON.stringify(entry.error)}` : '';
+    const line = `${entry.timestamp} ${level.toUpperCase()} [${entry.scope}] ${entry.event} ${JSON.stringify(entry.message)} context=${context}${failure}`;
+    const output = { debug: console.debug, info: console.info, warn: console.warn, error: console.error }[level];
+    output(line);
   }
 
-  public debug(scope: string, message: string, metadata?: Record<string, unknown>): void {
-    this.log('debug', scope, message, metadata);
-  }
-
-  public info(scope: string, message: string, metadata?: Record<string, unknown>): void {
-    this.log('info', scope, message, metadata);
-  }
-
-  public warn(scope: string, message: string, metadataOrError?: Record<string, unknown> | unknown): void {
-    if (metadataOrError instanceof Error || typeof metadataOrError === 'string') {
-      this.log('warn', scope, message, null, metadataOrError);
-    } else {
-      this.log('warn', scope, message, metadataOrError as Record<string, unknown>);
-    }
-  }
-
-  public error(scope: string, message: string, errorOrMeta?: unknown, metadata?: Record<string, unknown>): void {
-    if (errorOrMeta instanceof Error || typeof errorOrMeta === 'string') {
-      this.log('error', scope, message, metadata, errorOrMeta);
-    } else if (typeof errorOrMeta === 'object' && errorOrMeta !== null && 'error' in errorOrMeta) {
-      const { error: embeddedErr, ...restMeta } = errorOrMeta as { error: unknown; [key: string]: unknown };
-      this.log('error', scope, message, restMeta, embeddedErr);
-    } else {
-      this.log('error', scope, message, errorOrMeta as Record<string, unknown>, null);
-    }
-  }
+  public debug(scope: string, event: LogEvent, options: LogOptions): void { this.log('debug', scope, event, options); }
+  public info(scope: string, event: LogEvent, options: LogOptions): void { this.log('info', scope, event, options); }
+  public warn(scope: string, event: LogEvent, options: LogOptions): void { this.log('warn', scope, event, options); }
+  public error(scope: string, event: LogEvent, options: LogOptions): void { this.log('error', scope, event, options); }
 
   public createScoped(scope: string): ScopedLogger {
     return {
-      debug: (msg, meta) => this.debug(scope, msg, meta),
-      info: (msg, meta) => this.info(scope, msg, meta),
-      warn: (msg, metaOrErr) => this.warn(scope, msg, metaOrErr),
-      error: (msg, err, meta) => this.error(scope, msg, err, meta),
+      debug: (event, options) => this.debug(scope, event, options),
+      info: (event, options) => this.info(scope, event, options),
+      warn: (event, options) => this.warn(scope, event, options),
+      error: (event, options) => this.error(scope, event, options),
     };
   }
 
   public getRecentLogs(limit = 50): LogEntry[] {
-    return this.logBuffer.slice(-limit);
+    if (!Number.isFinite(limit) || limit <= 0) return [];
+    return JSON.parse(JSON.stringify(this.logBuffer.slice(-Math.floor(limit)))) as LogEntry[];
   }
 
-  public clearLogs(): void {
-    this.logBuffer = [];
-  }
+  public exportLogs(): string { return JSON.stringify(this.logBuffer); }
+  public clearLogs(): void { this.logBuffer = []; }
 }
 
 export const logger = new AppLogger();
-export const createScopedLogger = (scope: string) => logger.createScoped(scope);
+export const createScopedLogger = (scope: string): ScopedLogger => logger.createScoped(scope);

@@ -224,6 +224,36 @@ Yatırımlar ekranında varlık tahsis bölümünün hemen altında, kullanıcı
 
 ---
 
+### Uygulama logları
+
+Uygulama kayıtları `utils/logger.ts` üzerinden üretilir. Her modül `createScopedLogger` ile kendi scope'unu tanımlar. Tüm seviyeler aynı çağrı biçimini kullanır.
+
+```ts
+log.warn('analysis.request.failed', {
+  message: 'API request failed.',
+  context: { requestId, method: 'POST', path: '/v1/analyses', status: 422, durationMs },
+  error,
+});
+```
+
+- Kayıt şeması `timestamp` (UTC), `level`, `scope`, sabit İngilizce `event`, İngilizce geliştirici mesajı `message`, `context` ve `error` alanlarından oluşur. Kullanıcıya gösterilen hata mesajlarının mevcut dili korunur. Hata nesnesi `name`, `message`, `code` ve `stack` alanlarına normalize edilir.
+- `debug` önbellek, sorgu birleştirme, polling, gecikmiş yanıt ve rutin okuma ayrıntıları içindir. `info` kullanıcı işlemleri ve önemli durum değişimlerini, `warn` istek başarısızlıklarını, yeniden denemeleri ve eski veriye dönüşü, `error` tamamlanamayan işlemleri ve sözleşme hatalarını kaydeder. API hatası API katmanında kaydedilir, analiz hook'ları aynı hataya ait ekran bağlamını debug seviyesinde ekler.
+- `context` alanına ham istek/yanıt, kimlik bilgileri ve kullanıcı metinleri eklenmez. İşlem kimlikleri, durumlar, sayaçlar ve süreler açıkça seçilir. Bilinen hassas alan adları, kullanıcı kimlikleri, e-posta adresleri, Bearer/JWT token'ları, tanınan API anahtarı biçimleri, URL içindeki kimlik bilgileri ve parola/anahtar parametreleri kayıttan önce maskelenir. Temizleme mesajı, context'i ve hata mesajı/stack'ini kapsar. Yeni hassas alanlar veya anahtar biçimleri eklenirken temizleme kuralları ve testleri güncellenmelidir.
+- `false`, `0`, uzun metinler ve iç içe context nesneleri korunur. Döngüsel nesneler güvenli biçimde işaretlenir ve nesne derinliği sınırlandırılır. Konsol çıktısı tek satırdır.
+- Analysis API çağrıları `X-Request-ID` başlığıyla bir istemci istek kimliği gönderir. Yeniden denemeler aynı kimliği korur. Kayıtlar HTTP metodu, yol, deneme numarası, süre ve yanıt durumunu içerir. Backend standart doğrulama alan yolları sağladığında `invalidFields` kaydedilir, reddedilen değerler ve ham hata gövdesi kaydedilmez. Backend tarafında eşleştirme için bu başlığın sunucu loglarına da aktarılması gerekir.
+- Son 100 kayıt yalnız bellekte tutulur. `logger.getRecentLogs()` bağımsız bir kopya, `logger.exportLogs()` temizlenmiş JSON döndürür. Uygulama kapanınca kayıtlar kaybolur. Varsayılan konsol seviyesi geliştirmede debug, üretimde info'dur. Konsol filtresi bellek tamponunu filtrelemez. Harici toplama veya kalıcı log saklama entegrasyonu yoktur.
+- ESLint, logger ve test dosyaları dışında doğrudan `console` kullanımını engeller. `check:health` komutu da aynı logger'ı kullanır. Etkileşimli proje sıfırlama komutunun kullanıcı yönergeleri doğrudan terminale yazılır.
+
+### Agent servisi ve sunucu kaynakları
+
+Menüdeki **Agent servisi** kartı API ve kaynak durumunu gösterir. Kart `/agent-health` detay sayfasını açar. CPU yüzdesi, mantıksal çekirdek sayısı, örnekleme aralığı, bellek kullanımı (GiB), kullanılabilir bellek, kaynak örnekleme zamanı ve sistem çalışma süresi burada gösterilir.
+
+Detay sorgusu mevcut Supabase oturumunun güncel access token'ıyla `GET /healthz` isteği yapar. Mevcut API istemcisi 401 yanıtında oturumu bir kez yeniler. Backend yalnız yapılandırılmış kişisel hesap sahibine detay verir. 403 yetki gereksinimi, geçersiz oturum ve bağlantı hatası ayrı gösterilir. Kaynak bilgisi olmayan eski/public sağlık yanıtları API erişimi olarak gösterilir.
+
+Detay ekranı odaktayken ve uygulama ön plandayken 12 saniyede bir yenilenir. Menü kartı odaklandığında bir kez kontrol edilir. İstekler önbelleksizdir, aynı anda ikinci istek başlatılmaz ve kullanıcı değişimi, ekran kapanması veya uygulamanın arka plana geçmesi bekleyen isteği iptal eder. Başarısız yenilemede eski sayılar gösterilmez.
+
+`scope: host` sunucunun tüm iş yüklerini, `scope: system` API ortamının sistem ölçümlerini ifade eder. İlk CPU örneği ve eksik sayaçlar ölçüm bekleniyor olarak gösterilir. CPU için %90/%98, bellek için %85/%95 uyarı/kritik sınırları uygulanır. Bu kontrol arka plan işlerini, veritabanını, model veya ChatGPT oturumlarını, disk sağlığını ve AWS durumunu doğrulamaz. Sunucuda kaynak sayaçlarını sunan backend imajı ile Compose yapılandırmasının dağıtılmış olması gerekir.
+
 ## 10. Agent ve Finansal Çoklu Ajan Analizleri
 
 Alt navigasyondaki **Agent** sekmesi, FinBot Analysis Backend üzerinden yeni finansal analiz başlatma, devam eden analizi takip etme, geçmiş analizleri listeleme ve tamamlanan Markdown raporlarını güvenli biçimde görüntüleme akışını sunar.
@@ -246,6 +276,8 @@ Yeni analizde tarih alanının ardından **Analiz Vadesi** seçilir. Kısa (1 ay
 5. Yalnızca `status=success` ve `stage=finished` olduğunda rapor endpoint'i çağrılır; terminal hata durumlarında polling sonlandırılır.
 6. Uygulama yeniden açıldığında kullanıcıya ait aktif analiz kimliği okunur ve takip kaldığı yerden sürdürülür.
 7. Analiz kabul edildiğinde oluşturma modalı kapanır ve kullanıcı Agent ana ekranında kalır. Çalışan analiz, rapor detay modalından bağımsız olarak arka planda takip edilir; detay ekranı yalnız kullanıcı geçmiş kartına dokunduğunda açılır.
+
+Yeni analizlerde analist seçenekleri `market`, `macro` (Makro Analist), `news` ve `fundamentals` olarak gönderilir. Yeni raporların Makro bölümü `macro` koduyla gösterilir. Yatırımcı Tepkisi Haber raporunun içinde yer alır. Geçmiş raporlardaki ayrı `sentiment` bölümleri ve `effective_config.analysts` içindeki eski `social` değeri görüntüleme için desteklenir. Frontend raporları `sections` sözleşmesinden okur, ham state alanlarını kullanmaz.
 
 ### Dinamik Model Kataloğu
 

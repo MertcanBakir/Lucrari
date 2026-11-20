@@ -301,42 +301,52 @@ export function useAnalysis(): UseAnalysisResult {
       setSelectedError(null);
 
       try {
-        log.debug('Seçili analiz durumu kontrol ediliyor', { analysisId, requestToken });
+        log.debug('analysis.selection.polling', {
+          message: 'Analysis selection polling.',
+          context: { analysisId, generation: requestToken }
+        });
         const status = await fetchAnalysisStatus(analysisId);
         if (
           requestToken !== selectedRequestTokenRef.current ||
           activeUserRef.current !== requestUserId
         ) {
-          log.debug('Geciken analiz durumu cevabı reddedildi', { analysisId, requestToken });
+          log.debug('analysis.selection.discarded', {
+            message: 'Analysis selection discarded.',
+            context: { analysisId, generation: requestToken }
+          });
           return;
         }
 
-        log.debug('Analiz durumu güncellendi', {
-          analysisId,
-          status: status.status,
-          stage: status.stage,
+        log.debug('analysis.selection.updated', {
+          message: 'Analysis selection updated.',
+          context: { analysisId, status: status.status, stage: status.stage }
         });
         selectedAnalysisRef.current = status;
         setSelectedAnalysis(status);
         setHistory((previous) => mergeHistoryItem(previous, status));
 
         if (isAnalysisSuccessful(status)) {
-          log.info('Tamamlanan analiz için rapor isteniyor', { analysisId, ticker: status.ticker });
+          log.info('analysis.report.requested', {
+            message: 'Analysis report requested.',
+            context: { analysisId, ticker: status.ticker }
+          });
           const report = await fetchAnalysisReport(analysisId);
           if (
             requestToken !== selectedRequestTokenRef.current ||
             activeUserRef.current !== requestUserId
           ) {
-            log.debug('Geciken analiz raporu cevabı reddedildi', { analysisId, requestToken });
+            log.debug('analysis.report.discarded', {
+              message: 'Analysis report discarded.',
+              context: { analysisId, generation: requestToken }
+            });
             return;
           }
-          log.info('Analiz raporu arayüze uygulandı', {
-            analysisId,
-            sectionCount: report.sections.length,
-            partCount: report.sections.reduce(
+          log.info('analysis.report.applied', {
+            message: 'Analysis report applied.',
+            context: { analysisId, sectionCount: report.sections.length, partCount: report.sections.reduce(
               (total, section) => total + Object.keys(section.parts).length,
               0
-            ),
+            ) }
           });
           selectedAnalysisRef.current = status;
           setSelectedReport(report);
@@ -353,10 +363,10 @@ export function useAnalysis(): UseAnalysisResult {
           requestToken === selectedRequestTokenRef.current &&
           activeUserRef.current === requestUserId
         ) {
-          log.warn('Seçili analiz yüklenemedi', {
-            analysisId,
-            errorCode: isAnalysisApiError(error) ? error.code : 'UNKNOWN',
-            error: safeMessage(error),
+          log.debug('analysis.selection.failed', {
+            message: 'Analysis selection failed.',
+            context: { analysisId, errorCode: isAnalysisApiError(error) ? error.code : 'UNKNOWN' },
+            error: safeMessage(error)
           });
           setSelectedError(safeMessage(error));
           setPollRetryNonce((value) => value + 1);
@@ -380,14 +390,20 @@ export function useAnalysis(): UseAnalysisResult {
       const requestToken = ++trackedRequestTokenRef.current;
 
       try {
-        log.debug('Arka plan analiz durumu kontrol ediliyor', { analysisId, requestToken });
+        log.debug('analysis.background.polling', {
+          message: 'Analysis background polling.',
+          context: { analysisId, generation: requestToken }
+        });
         const status = await fetchAnalysisStatus(analysisId);
         if (
           requestToken !== trackedRequestTokenRef.current ||
           trackedAnalysisIdRef.current !== analysisId ||
           activeUserRef.current !== requestUserId
         ) {
-          log.debug('Geciken arka plan analiz cevabı reddedildi', { analysisId, requestToken });
+          log.debug('analysis.background.discarded', {
+            message: 'Analysis background discarded.',
+            context: { analysisId, generation: requestToken }
+          });
           return;
         }
 
@@ -436,10 +452,10 @@ export function useAnalysis(): UseAnalysisResult {
         ) {
           return;
         }
-        log.warn('Arka plan analiz durumu alınamadı', {
-          analysisId,
-          errorCode: isAnalysisApiError(error) ? error.code : 'UNKNOWN',
-          error: safeMessage(error),
+        log.debug('analysis.background.failed', {
+          message: 'Analysis background failed.',
+          context: { analysisId, errorCode: isAnalysisApiError(error) ? error.code : 'UNKNOWN' },
+          error: safeMessage(error)
         });
         if (selectedAnalysisRef.current?.id === analysisId) {
           setSelectedError(safeMessage(error));
@@ -452,11 +468,9 @@ export function useAnalysis(): UseAnalysisResult {
 
   const openAnalysis = useCallback(
     async (record: AnalysisRecord) => {
-      log.info('Analiz detayı açıldı', {
-        analysisId: record.id,
-        ticker: record.ticker,
-        status: record.status,
-        stage: record.stage,
+      log.info('analysis.detail.opened', {
+        message: 'Analysis detail opened.',
+        context: { analysisId: record.id, ticker: record.ticker, status: record.status, stage: record.stage }
       });
       setSelectedAnalysis(record);
       selectedAnalysisRef.current = record;
@@ -503,10 +517,9 @@ export function useAnalysis(): UseAnalysisResult {
         retryIntentRef.current = null;
         setHistory((previous) => mergeHistoryItem(previous, result));
         trackAnalysis(result, true);
-        log.info('Analiz kabul edildi; ana ekran etkileşimi korunarak arka planda takip ediliyor', {
-          analysisId: result.id,
-          ticker: result.ticker,
-          status: result.status,
+        log.info('analysis.start.accepted', {
+          message: 'Analysis start accepted.',
+          context: { analysisId: result.id, ticker: result.ticker, status: result.status }
         });
         return true;
       } catch (error) {

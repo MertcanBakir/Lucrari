@@ -86,9 +86,9 @@ export function usePortfolioCalendarOwnership(): UsePortfolioCalendarOwnershipRe
     const unsubscribe = subscribeOwnershipChanges((data) => {
       if (!isMountedRef.current) return;
       if (data.userId !== currentUserIdRef.current) {
-        log.debug('Farklı kullanıcıya ait sahiplik bildirimi yok sayıldı', {
-          dataUserId: data.userId,
-          currentUserId: currentUserIdRef.current,
+        log.debug('portfolio.ownership.notification.discarded', {
+          message: 'Portfolio ownership notification discarded.',
+          context: { dataUserId: data.userId, currentUserId: currentUserIdRef.current }
         });
         return;
       }
@@ -143,16 +143,18 @@ export function usePortfolioCalendarOwnership(): UsePortfolioCalendarOwnershipRe
           error: null,
         });
       } else {
-        log.warn('Async sahiplik cevabı kullanıcı uyuşmazlığı nedeniyle reddedildi', {
-          activeUserId,
-          currentUserId: currentUserIdRef.current,
-          dataUserId: data.userId,
+        log.warn('portfolio.ownership.response.discarded', {
+          message: 'Portfolio ownership response discarded.',
+          context: { activeUserId, currentUserId: currentUserIdRef.current, dataUserId: data.userId }
         });
       }
     } catch (err: unknown) {
       if (isMountedRef.current && currentUserIdRef.current === activeUserId) {
         const errorObj = err instanceof Error ? err : new Error('Açık pozisyonlar yüklenemedi');
-        log.warn('Açık pozisyonlar yüklenirken hata', errorObj);
+        log.warn('portfolio.ownership.load.failed', {
+          message: 'Portfolio ownership load failed.',
+          error: errorObj
+        });
         setRawState((prev) => ({
           ...prev,
           isLoading: false,

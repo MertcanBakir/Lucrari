@@ -1,3 +1,5 @@
+import { generateUUID } from '@/utils/uuid';
+import { normalizeAgentHealth } from '@/utils/agent-health';
 import { ensureAnonymousSession } from '@/services/auth/auth-service';
 import { getSupabaseClient } from '@/services/supabase/client';
 import type {
@@ -184,24 +186,30 @@ function mapHttpError(
   });
 }
 
-async function readSafeBackendErrorCode(response: Response): Promise<string | null> {
+async function readSafeBackendError(response: Response): Promise<{ code: string | null; invalidFields: string[] }> {
+  const result: { code: string | null; invalidFields: string[] } = { code: null, invalidFields: [] };
   try {
-    const raw = (await response.json()) as unknown;
-    if (
-      typeof raw === 'object' &&
-      raw !== null &&
-      !Array.isArray(raw) &&
-      typeof (raw as { error?: unknown }).error === 'object' &&
-      (raw as { error: unknown }).error !== null &&
-      !Array.isArray((raw as { error: unknown }).error)
-    ) {
-      const code = (raw as { error: { code?: unknown } }).error.code;
-      return typeof code === 'string' && code.trim() ? code.trim() : null;
+    const raw = await response.json();
+    const code = raw?.error?.code;
+    if (typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(code)) result.code = code;
+    const allowed = new Set([
+      'body', 'request', 'ticker', 'analysis_date', 'analysis_horizon', 'profile',
+      'language', 'analysts', 'auth_type', 'quick_model', 'deep_model', 'models',
+      'quick', 'deep', 'connection_id', 'model', 'provider', 'name', 'api_key',
+    ]);
+    if (Array.isArray(raw?.detail)) {
+      for (const item of raw.detail.slice(0, 20)) {
+        const location: unknown = item?.loc;
+        if (Array.isArray(location) && location.length > 0 && location.length <= 8 &&
+            location.every((part) => allowed.has(part) || (Number.isInteger(part) && part >= 0 && part < 100))) {
+          result.invalidFields.push(location.filter((part) => part !== 'body').join('.'));
+        }
+      }
     }
   } catch {
-    // Error bodies are optional and must never be surfaced verbatim.
+    // Backend error bodies are optional. Never log their raw contents.
   }
-  return null;
+  return result;
 }
 
 export function isAnalysisApiError(error: unknown): error is AnalysisApiError {
@@ -255,15 +263,32 @@ interface ApiRequestOptions {
   requiresAuth?: boolean;
   signal?: AbortSignal;
   userId?: string;
+  noStore?: boolean;
 }
 
 async function requestApi(path: string, options: ApiRequestOptions = {}): Promise<unknown> {
   const baseUrl = getAnalysisApiBaseUrl();
   const requiresAuth = options.requiresAuth !== false;
+  const requestId = generateUUID();
+  const method = options.method ?? 'GET';
+  let attempt = 0;
   let refreshedSession = false;
   let retriedRateLimit = false;
 
   while (true) {
+    if (options.signal?.aborted) {
+      throw new AnalysisApiError({
+        message: 'İstek iptal edildi.',
+        code: 'ANALYSIS_TIMEOUT',
+        isRetryable: true,
+      });
+    }
+    const startedAt = Date.now();
+    attempt++;
+    let invalidFields: string[] = [];
+    const requestContext = () => ({
+      requestId, method, path, attempt, durationMs: Math.max(0, Date.now() - startedAt),
+    });
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     const abortListener = () => controller.abort();
@@ -271,40 +296,61 @@ async function requestApi(path: string, options: ApiRequestOptions = {}): Promis
 
     try {
       const token = requiresAuth ? await getAccessToken(refreshedSession, options.userId) : null;
-      const headers: Record<string, string> = { Accept: 'application/json' };
+      const headers: Record<string, string> = { Accept: 'application/json', 'X-Request-ID': requestId };
       if (token) headers.Authorization = `Bearer ${token}`;
       if (options.body !== undefined) headers['Content-Type'] = 'application/json';
       if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey;
 
       const response = await fetch(`${baseUrl}${path}`, {
-        method: options.method ?? 'GET',
+        method,
         headers,
         body: options.body === undefined ? undefined : JSON.stringify(options.body),
         signal: controller.signal,
+        ...(options.noStore ? { cache: 'no-store' as const } : {}),
       });
 
       if (response.status === 401 && requiresAuth && !refreshedSession) {
+        log.debug('analysis.request.retry', {
+          message: 'Refreshing the session before retrying the request.',
+          context: { ...requestContext(), status: 401, retryReason: 'session_expired' },
+        });
         refreshedSession = true;
         continue;
       }
 
       if (response.status === 429 && !retriedRateLimit && (!options.method || options.method === 'GET')) {
         retriedRateLimit = true;
-        await wait(getRetryAfterMs(response));
+        const retryAfterMs = getRetryAfterMs(response);
+        log.warn('analysis.request.retry', {
+          message: 'Retrying a throttled request.',
+          context: { ...requestContext(), status: 429, retryAfterMs, retryReason: 'rate_limited' },
+        });
+        await wait(retryAfterMs);
         continue;
       }
 
       if (!response.ok) {
         const retryAfterMs = response.status === 429 ? getRetryAfterMs(response) : null;
-        const backendCode = await readSafeBackendErrorCode(response);
-        log.warn('Analiz API isteği başarısız oldu', { path, status: response.status });
-        throw mapHttpError(response.status, retryAfterMs, backendCode);
+        const backendError = await readSafeBackendError(response);
+        invalidFields = backendError.invalidFields;
+        throw mapHttpError(response.status, retryAfterMs, backendError.code);
       }
 
       const text = await response.text();
-      if (!text) return null;
+      if (!text) {
+        log.debug('analysis.request.completed', {
+          message: 'API request completed.',
+          context: { ...requestContext(), status: response.status },
+        });
+        return null;
+      }
       try {
-        return JSON.parse(text) as unknown;
+        const payload = JSON.parse(text) as unknown;
+        log.debug('analysis.request.completed', {
+          message: 'API request completed.',
+          context: { ...requestContext(), status: response.status },
+        });
+        return payload;
       } catch {
         throw new AnalysisApiError({
           message: 'Analiz servisi beklenmeyen bir yanıt döndürdü.',
@@ -313,15 +359,21 @@ async function requestApi(path: string, options: ApiRequestOptions = {}): Promis
         });
       }
     } catch (error) {
-      if (isAnalysisApiError(error)) throw error;
       const wasAborted = error instanceof Error && error.name === 'AbortError';
-      throw new AnalysisApiError({
+      const failure = isAnalysisApiError(error) ? error : new AnalysisApiError({
         message: wasAborted
           ? 'Analiz servisi zaman aşımına uğradı. Lütfen tekrar deneyin.'
           : 'Analiz servisine bağlanılamadı. İnternet bağlantınızı kontrol edin.',
         code: wasAborted ? 'ANALYSIS_TIMEOUT' : 'ANALYSIS_NETWORK_ERROR',
         isRetryable: true,
       });
+      const level = options.signal?.aborted ? 'debug' : 'warn';
+      log[level]('analysis.request.failed', {
+        message: 'API request failed.',
+        context: { ...requestContext(), status: failure.status, invalidFields },
+        error: failure,
+      });
+      throw failure;
     } finally {
       clearTimeout(timeout);
       options.signal?.removeEventListener('abort', abortListener);
@@ -390,8 +442,13 @@ function summarizeReportResponse(raw: unknown): Record<string, unknown> {
 }
 
 export async function checkAnalysisHealth(signal?: AbortSignal): Promise<boolean> {
-  const raw = await requestApi('/healthz', { requiresAuth: false, signal });
+  const raw = await requestApi('/healthz', { requiresAuth: false, signal, noStore: true });
   return typeof raw === 'object' && raw !== null && (raw as Record<string, unknown>).status === 'ok';
+}
+
+export async function fetchAgentHealth(userId: string, signal?: AbortSignal) {
+  const raw = await requestApi('/healthz', { userId, signal, noStore: true });
+  return normalizeAgentHealth(raw);
 }
 
 export interface FetchAnalysisProvidersOptions {
@@ -544,15 +601,19 @@ export async function fetchAnalysisReport(
   analysisId: string,
   signal?: AbortSignal
 ): Promise<AnalysisReport> {
-  log.info('Analiz raporu yükleniyor', { analysisId });
+  log.info('analysis.report.loading', {
+    message: 'Analysis report loading.',
+    context: { analysisId }
+  });
 
   let raw: unknown;
   try {
     raw = await requestApi(`/v1/analyses/${encodeURIComponent(analysisId)}/report`, { signal });
   } catch (error) {
-    log.error('Analiz raporu isteği tamamlanamadı', error, {
-      analysisId,
-      errorCode: isAnalysisApiError(error) ? error.code : 'UNKNOWN',
+    log.debug('analysis.report.failed', {
+      message: 'Analysis report failed.',
+      context: { analysisId, errorCode: isAnalysisApiError(error) ? error.code : 'UNKNOWN' },
+      error: error
     });
     throw error;
   }
@@ -560,17 +621,16 @@ export async function fetchAnalysisReport(
   const responseSummary = summarizeReportResponse(raw);
   const result = normalizeAnalysisReport(raw);
   if (!result) {
-    log.error('Analiz raporu cevabı sözleşmeye uymuyor', {
-      analysisId,
-      ...responseSummary,
+    log.error('analysis.report.invalid', {
+      message: 'Analysis report invalid.',
+      context: { analysisId, ...responseSummary }
     });
     throw contractError();
   }
 
-  log.info('Analiz raporu başarıyla yüklendi', {
-    analysisId,
-    ...responseSummary,
-    upstreamVersion: result.upstreamVersion,
+  log.debug('analysis.report.loaded', {
+    message: 'Analysis report loaded.',
+    context: { analysisId, ...responseSummary, upstreamVersion: result.upstreamVersion }
   });
   return result;
 }

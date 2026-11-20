@@ -40,7 +40,7 @@ import {
 
 const ANALYST_LABELS: Record<AnalystCode, string> = {
   market: 'Teknik',
-  social: 'Sosyal',
+  macro: 'Makro Analist',
   news: 'Haber',
   fundamentals: 'Temel',
 };
@@ -341,6 +341,9 @@ export function AnalysisCreateModal({
                   return (
                     <TouchableOpacity
                       key={analyst}
+                      accessibilityRole="button"
+                      accessibilityLabel={ANALYST_LABELS[analyst]}
+                      accessibilityState={{ selected, disabled: isStarting }}
                       disabled={isStarting}
                       onPress={() => toggleAnalyst(analyst)}
                       style={[

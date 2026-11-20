@@ -64,7 +64,10 @@ function notifyOwnershipSubscribers(data: PortfolioOwnershipData): void {
     try {
       listener(data);
     } catch (err) {
-      log.error('Ownership listener hatası', { error: String(err) });
+      log.error('portfolio.ownership.listener.failed', {
+        message: 'Portfolio ownership listener failed.',
+        error: err
+      });
     }
   }
 }
@@ -72,8 +75,9 @@ function notifyOwnershipSubscribers(data: PortfolioOwnershipData): void {
 // Automatically invalidate cache on portfolio mutations (BUY, SELL, RESET, REVERSAL)
 subscribePortfolioChanges(() => {
   globalOwnershipRevision++;
-  log.debug('Portföy mutasyonu algılandı, sahiplik revizyonu artırıldı', {
-    newRevision: globalOwnershipRevision,
+  log.debug('portfolio.ownership.revision.changed', {
+    message: 'Portfolio ownership revision changed.',
+    context: { newRevision: globalOwnershipRevision }
   });
 
   for (const [userId, cached] of ownershipCacheByUserId.entries()) {
@@ -86,7 +90,10 @@ subscribePortfolioChanges(() => {
 
   if (ownershipSubscribers.size > 0) {
     fetchOwnedPositions({ forceRefresh: true }).catch((err) => {
-      log.warn('Otomatik sahiplik yenileme hatası', { error: String(err) });
+      log.warn('portfolio.ownership.refresh.failed', {
+        message: 'Portfolio ownership refresh failed.',
+        error: err
+      });
     });
   }
 });
@@ -140,10 +147,9 @@ async function executeOwnershipFetch(userId: string): Promise<PortfolioOwnership
 
     // Check if a mutation occurred while this RPC was executing
     if (globalOwnershipRevision !== fetchStartRevision) {
-      log.warn('Fetch sürerken portföy mutasyonu gerçekleşti, güncel revizyon için follow-up yapılıyor', {
-        fetchStartRevision,
-        currentRevision: globalOwnershipRevision,
-        attempt: attempts,
+      log.warn('portfolio.ownership.revision.retry', {
+        message: 'Portfolio ownership revision retry.',
+        context: { fetchStartRevision, currentRevision: globalOwnershipRevision, attempt: attempts }
       });
       continue;
     }
@@ -178,18 +184,19 @@ async function executeOwnershipFetch(userId: string): Promise<PortfolioOwnership
     ownershipCacheByUserId.set(userId, result);
     notifyOwnershipSubscribers(result);
 
-    log.info('Açık pozisyon sahiplik haritası başarıyla oluşturuldu', {
-      userId,
-      açıkPozisyonSayısı: ownedMap.size,
-      portfolioId: portfolio.id,
-      revision: result.revision,
+    log.debug('portfolio.ownership.loaded', {
+      message: 'Portfolio ownership loaded.',
+      context: { userId, positionCount: ownedMap.size, portfolioId: portfolio.id, revision: result.revision }
     });
 
     return result;
   }
 
   // Fail-closed fallback: mutation conflict persisted across all attempts
-  log.error('Maksimum mutasyon çakışması denemesi aşıldı, fail-closed uygulanıyor', { userId });
+  log.error('portfolio.ownership.revision.exhausted', {
+    message: 'Portfolio ownership revision exhausted.',
+    context: { userId }
+  });
   const existingUserCache = ownershipCacheByUserId.get(userId);
   if (existingUserCache) {
     const staleFallback: PortfolioOwnershipData = {
@@ -221,7 +228,9 @@ export async function fetchOwnedPositions(
   // 1. Ensure authenticated user session first
   const authResult = await ensureAnonymousSession();
   if (!authResult.user || !authResult.user.id) {
-    log.error('Oturum doğrulanamadı');
+    log.error('portfolio.ownership.session.missing', {
+      message: 'Portfolio ownership session missing.'
+    });
     throw new PortfolioOperationError('Kullanıcı oturumu doğrulanamadı.');
   }
 
@@ -231,14 +240,20 @@ export async function fetchOwnedPositions(
   // 2. Check user-keyed fresh cache
   const cached = ownershipCacheByUserId.get(userId);
   if (!forceRefresh && cached && !cached.isStale && now - cached.timestamp < OWNERSHIP_CACHE_TTL_MS) {
-    log.debug('Sahiplik önbellek isabeti', { userId, revision: cached.revision });
+    log.debug('portfolio.ownership.cache.hit', {
+      message: 'Portfolio ownership cache hit.',
+      context: { userId, revision: cached.revision }
+    });
     return cached;
   }
 
   // 3. Check in-flight request deduplication for this specific user
   const existingInFlight = inFlightRequestsByUserId.get(userId);
   if (existingInFlight) {
-    log.debug('Eşzamanlı sahiplik isteği birleştirildi (deduplication)', { userId });
+    log.debug('portfolio.ownership.request.deduplicated', {
+      message: 'Portfolio ownership request deduplicated.',
+      context: { userId }
+    });
     return existingInFlight.promise;
   }
 
@@ -249,12 +264,19 @@ export async function fetchOwnedPositions(
     try {
       return await executeOwnershipFetch(userId);
     } catch (error) {
-      log.error('Açık pozisyonlar yüklenirken hata oluştu', { userId, error: String(error) });
+      log.error('portfolio.ownership.load.failed', {
+        message: 'Portfolio ownership load failed.',
+        context: { userId },
+        error: error
+      });
 
       // Retain stale cache ONLY if it belongs to the exact same user
       const existingUserCache = ownershipCacheByUserId.get(userId);
       if (existingUserCache) {
-        log.warn('Hata nedeniyle önceki başarılı sahiplik verisi stale olarak korunuyor', { userId });
+        log.warn('portfolio.ownership.cache.stale', {
+          message: 'Portfolio ownership cache stale.',
+          context: { userId }
+        });
         const staleData: PortfolioOwnershipData = {
           ...existingUserCache,
           isStale: true,

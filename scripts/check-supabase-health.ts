@@ -1,75 +1,47 @@
-/**
- * Lucrari Supabase Health Check CLI Script
- * 
- * Run with: npx ts-node scripts/check-supabase-health.ts
- * or via: npm run test:health
- */
-
+/** Run with npm run check:health. */
 import * as fs from 'fs';
 import * as path from 'path';
+import { createScopedLogger } from '../utils/logger';
 
-// Load .env file if present in project root
+const log = createScopedLogger('HealthCheckCli');
 const envPath = path.resolve(__dirname, '../.env');
 if (fs.existsSync(envPath)) {
   const envContent = fs.readFileSync(envPath, 'utf-8');
   for (const line of envContent.split('\n')) {
     const trimmed = line.trim();
-    if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
-      const [key, ...values] = trimmed.split('=');
-      const val = values.join('=').trim().replace(/^['"](.*)['"]$/, '$1');
-      if (!process.env[key.trim()]) {
-        process.env[key.trim()] = val;
-      }
-    }
+    if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) continue;
+    const [key, ...values] = trimmed.split('=');
+    const value = values.join('=').trim().replace(/^['"](.*)['"]$/, '');
+    if (!process.env[key.trim()]) process.env[key.trim()] = value;
   }
 }
 
 async function runCliHealthCheck() {
-  console.log('\n======================================================');
-  console.log('🚀 LUCRARI — SUPABASE HEALTH CHECK & DIAGNOSTICS');
-  console.log('======================================================\n');
-
-  const { validateSupabaseConfig, maskKey } = await import('../services/supabase/config');
+  const { validateSupabaseConfig } = await import('../services/supabase/config');
   const validation = validateSupabaseConfig();
-
-  console.log(`📡 EXPO_PUBLIC_SUPABASE_URL     : ${validation.url || '[NOT SET]'}`);
-  console.log(`🔑 EXPO_PUBLIC_SUPABASE_ANON_KEY : ${maskKey(validation.anonKey)}`);
-  console.log(`⚙️  Config Valid                 : ${validation.isValid ? '✅ YES' : '❌ NO'}`);
-
-  if (validation.warnings.length > 0) {
-    console.log(`⚠️  Warnings: ${validation.warnings.join(', ')}`);
-  }
-
   if (!validation.isValid) {
-    console.log('\n❌ HATA: Supabase ortam değişkenleri eksik veya hatalı:');
-    validation.errors.forEach((err) => console.log(`   - ${err}`));
-    console.log('\n💡 İpucu: .env.example dosyasını .env olarak kopyalayıp Supabase bilgilerinizi girin.\n');
+    log.error('supabase.health.config.invalid', {
+      message: 'Supabase configuration is invalid. Check the environment variables in .env.example.',
+      context: { errorCount: validation.errors.length, warningCount: validation.warnings.length },
+    });
     return;
   }
 
-  console.log('\n⏳ Backend ve Veritabanı servis kontrolleri başlatılıyor...\n');
-
   const { checkSupabaseHealth } = await import('../services/supabase/health');
-  const startTime = Date.now();
+  const startedAt = Date.now();
   const report = await checkSupabaseHealth();
-  const totalElapsed = Date.now() - startTime;
-
-  console.log('------------------------------------------------------');
-  console.log(`Durum: ${report.overallStatus.toUpperCase()} | Ort. Gecikme: ${report.averageLatencyMs ? report.averageLatencyMs + ' ms' : '—'}`);
-  console.log('------------------------------------------------------');
-
-  report.checks.forEach((c) => {
-    const icon = c.status === 'pass' ? '✅' : c.status === 'warn' ? '⚠️' : '❌';
-    const latency = c.latencyMs !== null ? `(${c.latencyMs} ms)` : '';
-    console.log(`${icon} [${c.category.toUpperCase()}] ${c.name} ${latency}`);
-    console.log(`   └─ ${c.message}`);
+  for (const check of report.checks) {
+    log.info('supabase.health.check.completed', {
+      message: 'Supabase diagnostic check completed.',
+      context: { checkId: check.id, category: check.category, status: check.status, latencyMs: check.latencyMs },
+    });
+  }
+  log.info('supabase.health.completed', {
+    message: 'Supabase health check completed.',
+    context: { status: report.overallStatus, durationMs: Date.now() - startedAt, latencyMs: report.averageLatencyMs },
   });
-
-  console.log('\n======================================================');
-  console.log(`✨ Tamamlandı (${totalElapsed} ms)`);
-  console.log('======================================================\n');
 }
 
-runCliHealthCheck().catch((err) => {
-  console.error('Beklenmeyen CLI hatası:', err);
+runCliHealthCheck().catch((error: unknown) => {
+  log.error('supabase.health.failed', { message: 'Supabase health check failed.', error });
 });

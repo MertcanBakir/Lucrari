@@ -105,7 +105,9 @@ export function formatEventTime(isoString?: string | null): string {
  * Clears the calendar cache and active in-flight requests (useful for tests and manual refreshes)
  */
 export function clearCalendarCache(): void {
-  log.debug('Önbellek ve in-flight istekler temizlendi');
+  log.debug('calendar.cache.cleared', {
+    message: 'Calendar cache cleared.'
+  });
   calendarCache.clear();
   inFlightCalendarFetches.clear();
 }
@@ -126,7 +128,10 @@ export async function fetchMonthlyCalendarEvents(
   // 1. Check in-flight promise map (deduplicate concurrent requests for the same month)
   const existingInFlight = inFlightCalendarFetches.get(monthKey);
   if (existingInFlight) {
-    log.debug(`Eşzamanlı takvim sorgusu birleştirildi (deduplication: ${monthKey})`);
+    log.debug('calendar.request.deduplicated', {
+      message: 'Calendar request deduplicated.',
+      context: { monthKey }
+    });
     return existingInFlight;
   }
 
@@ -134,12 +139,18 @@ export async function fetchMonthlyCalendarEvents(
   if (!options?.forceRefresh) {
     const cached = calendarCache.get(monthKey);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-      log.debug(`Önbellek isabeti (${monthKey})`);
+      log.debug('calendar.cache.hit', {
+        message: 'Calendar cache hit.',
+        context: { monthKey }
+      });
       return cached.data;
     }
   }
 
-  log.info(`Takvim verileri sorgulanıyor (${monthKey})`);
+  log.info('calendar.load.started', {
+    message: 'Calendar load started.',
+    context: { monthKey }
+  });
 
   // Calculate start & end boundaries of the month (including padding for timezone safety)
   const startDateStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
@@ -207,12 +218,20 @@ export async function fetchMonthlyCalendarEvents(
 
       // 4. Strict fail-closed verification: Never accept half-empty corrupted responses
       if (earningsRes.error) {
-        log.error('Bilanço verileri sorgulanamadı', { monthKey, error: earningsRes.error.message });
+        log.error('calendar.earnings.failed', {
+          message: 'Calendar earnings failed.',
+          context: { monthKey },
+          error: earningsRes.error
+        });
         throw createPortfolioOperationError('Bilanço verileri yüklenemedi', earningsRes.error);
       }
 
       if (economicRes.error) {
-        log.error('Ekonomik göstergeler sorgulanamadı', { monthKey, error: economicRes.error.message });
+        log.error('calendar.economic.failed', {
+          message: 'Calendar economic failed.',
+          context: { monthKey },
+          error: economicRes.error
+        });
         throw createPortfolioOperationError('Ekonomik göstergeler yüklenemedi', economicRes.error);
       }
 
@@ -293,9 +312,9 @@ export async function fetchMonthlyCalendarEvents(
       }
 
       const totalEventsCount = Object.values(eventsByDate).reduce((sum, arr) => sum + arr.length, 0);
-      log.info(`Takvim başarıyla yüklendi (${monthKey})`, {
-        olaylar: totalEventsCount,
-        günler: Object.keys(eventsByDate).length,
+      log.debug('calendar.load.completed', {
+        message: 'Calendar load completed.',
+        context: { olaylar: totalEventsCount, günler: Object.keys(eventsByDate).length, monthKey }
       });
 
       const result: MonthlyCalendarData = {
@@ -316,7 +335,10 @@ export async function fetchMonthlyCalendarEvents(
       if (error instanceof PortfolioOperationError) {
         throw error;
       }
-      log.warn('Takvim verileri yüklenirken hata oluştu', error);
+      log.warn('calendar.load.failed', {
+        message: 'Calendar load failed.',
+        error: error
+      });
       throw createPortfolioOperationError('Takvim verileri yüklenemedi', error);
     }
   })();

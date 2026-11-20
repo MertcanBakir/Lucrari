@@ -85,7 +85,10 @@ export function getSupabaseClient(): SupabaseClient<Database> {
   const targetKey = isConfigured ? anonKey : 'placeholder-anon-key';
   const storage = getAuthStorage();
 
-  log.info('İstemci başlatıldı', { yapılandırıldı: isConfigured });
+  log.info('supabase.client.created', {
+    message: 'Supabase client created.',
+    context: { isConfigured: isConfigured }
+  });
 
   clientInstance = createClient<Database>(targetUrl, targetKey, {
     auth: {
@@ -103,7 +106,9 @@ export function getSupabaseClient(): SupabaseClient<Database> {
  * Resets the client instance (useful after updating environment variables or during testing).
  */
 export function resetSupabaseClient(): void {
-  log.debug('İstemci sıfırlandı');
+  log.debug('supabase.client.reset', {
+    message: 'Supabase client reset.'
+  });
   clientInstance = null;
 }
 

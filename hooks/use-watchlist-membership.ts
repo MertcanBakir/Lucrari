@@ -92,9 +92,9 @@ export function useWatchlistMembership(): UseWatchlistMembershipReturn {
     const unsubscribe = subscribeWatchlistChanges((event: WatchlistChangeEvent) => {
       if (!isMountedRef.current) return;
       if (event.userId !== currentUserIdRef.current) {
-        log.debug('Farklı kullanıcıya ait izleme listesi bildirimi yok sayıldı', {
-          eventUserId: event.userId,
-          currentUserId: currentUserIdRef.current,
+        log.debug('watchlist.membership.notification.discarded', {
+          message: 'Watchlist membership notification discarded.',
+          context: { eventUserId: event.userId, currentUserId: currentUserIdRef.current }
         });
         return;
       }
@@ -153,16 +153,18 @@ export function useWatchlistMembership(): UseWatchlistMembershipReturn {
           error: null,
         });
       } else {
-        log.warn('Async izleme listesi üyelik cevabı kullanıcı uyuşmazlığı nedeniyle reddedildi', {
-          activeUserId,
-          currentUserId: currentUserIdRef.current,
-          dataUserId: data.userId,
+        log.warn('watchlist.membership.response.discarded', {
+          message: 'Watchlist membership response discarded.',
+          context: { activeUserId, currentUserId: currentUserIdRef.current, dataUserId: data.userId }
         });
       }
     } catch (err: unknown) {
       if (isMountedRef.current && currentUserIdRef.current === activeUserId) {
         const errorObj = err instanceof Error ? err : new Error('İzleme listesi yüklenemedi');
-        log.warn('İzleme listesi üyeliği yüklenirken hata', errorObj);
+        log.warn('watchlist.membership.load.failed', {
+          message: 'Watchlist membership load failed.',
+          error: errorObj
+        });
         setRawState((prev) => ({
           ...prev,
           isLoading: false,

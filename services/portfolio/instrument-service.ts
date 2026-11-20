@@ -87,7 +87,11 @@ export async function searchInstrumentsDetailed(
     const { data, error } = await q;
 
     if (error) {
-      log.warn('Enstrüman arama sorgusu başarısız oldu', { error: error.message, query, market });
+      log.warn('instrument.search.failed', {
+        message: 'Instrument search failed.',
+        context: { market },
+        error: error
+      });
       return {
         items: [],
         error: 'Piyasa enstrümanları yüklenirken bir hata oluştu.',
@@ -139,8 +143,10 @@ export async function searchInstrumentsDetailed(
       hasMore: rawList.length >= limit,
     };
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    log.error('searchInstrumentsDetailed istisnası', { error: msg });
+    log.error('instrument.search.exception', {
+      message: 'Instrument search exception.',
+      error: error
+    });
     return {
       items: [],
       error: 'Bağlantı hatası nedeniyle enstrümanlar alınamadı.',

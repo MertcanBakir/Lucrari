@@ -1,3 +1,4 @@
+import { normalizeAnalysisReport } from '@/utils/analysis';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Linking } from 'react-native';
 import { AnalysisAccountModal } from '@/components/analysis/analysis-account-modal';
@@ -96,6 +97,12 @@ it('validates the analysis inputs and submits the selected model and horizon', a
   fireEvent.press(screen.getByText('Kısa (1 ay)'));
   fireEvent.press(screen.getByRole('button', { name: 'Analizi Başlat' }));
   expect(screen.getByText(/Geçerli bir sembol/)).toBeOnTheScreen();
+  const macro = screen.getByRole('button', { name: 'Makro Analist' });
+  expect(macro).toHaveProp('accessibilityState', expect.objectContaining({ selected: true }));
+  fireEvent.press(macro);
+  expect(screen.getByRole('button', { name: 'Makro Analist' })).toHaveProp('accessibilityState', expect.objectContaining({ selected: false }));
+  fireEvent.press(screen.getByRole('button', { name: 'Makro Analist' }));
+  expect(screen.queryByText('Sosyal')).toBeNull();
   fireEvent.changeText(screen.getByPlaceholderText('AAPL'), ' aapl ');
   fireEvent.changeText(screen.getByPlaceholderText('YYYY-AA-GG'), '2026-02-31');
   fireEvent.press(screen.getByRole('button', { name: 'Analizi Başlat' }));
@@ -107,7 +114,9 @@ it('validates the analysis inputs and submits the selected model and horizon', a
   fireEvent.press(screen.getByRole('button', { name: 'Analizi Başlat' }));
   await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({
     ticker: 'AAPL', authType: 'personal_chatgpt', analysisHorizon: 'short_1m',
+    analysts: expect.arrayContaining(['market', 'macro', 'news', 'fundamentals']),
   })));
+  expect(start.mock.calls[0][0].analysts).toHaveLength(4);
   view.rerender(<AnalysisCreateModal {...props} startError="Sunucu meşgul" canRetryStart />);
   expect(screen.getByText('Sunucu meşgul')).toBeOnTheScreen();
   fireEvent.press(screen.getByText('Aynı İstekle Tekrar Dene'));
@@ -175,7 +184,7 @@ it('requires two API bindings and sends them with the selected model', async () 
   }
   fireEvent.press(screen.getByRole('button', { name: 'Analizi Başlat' }));
   await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({
-    authType: 'api_key', language: 'en', quick: { connectionId: connection.id, model: 'test-model' },
+    authType: 'api_key', language: 'en', analysts: ['market', 'macro', 'news', 'fundamentals'], quick: { connectionId: connection.id, model: 'test-model' },
     deep: { connectionId: connection.id, model: 'test-model' },
   })));
   view.rerender(<AnalysisCreateModal {...props} providersError="Katalog alınamadı" />);
@@ -184,4 +193,45 @@ it('requires two API bindings and sends them with the selected model', async () 
   view.rerender(<AnalysisCreateModal {...props} connections={{ ...connections, error: 'Bağlantılar alınamadı' }} />);
   fireEvent.press(screen.getByText('Yeniden Dene'));
   expect(connections.refresh).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  ['current', ['market', 'macro', 'news', 'fundamentals'],
+    [
+      { code: 'macro', title: 'Makro Analist', content_markdown: 'Makroekonomik görünüm', parts: {} },
+      { code: 'news', title: 'Haber Analisti', content_markdown: '## Yatırımcı Tepkisi\nHaberin yatırımcılar üzerindeki etkisi', parts: {} },
+    ]],
+  ['legacy', ['market', 'social', 'news'],
+    [
+      { code: 'sentiment', title: 'Yatırımcı Tepkisi', content_markdown: 'Geçmiş yatırımcı duyarlılığı', parts: {} },
+      { code: 'news', title: 'Haber Analisti', content_markdown: 'Geçmiş haber analizi', parts: {} },
+    ]],
+] as const)('opens a %s report with its original section structure', (version, analysts, sections) => {
+  const normalized = normalizeAnalysisReport({
+    sections: [...sections, {
+      code: 'disclaimer', title: 'Yasal uyarı', content_markdown: 'Yatırım tavsiyesi değildir.', parts: {},
+    }],
+    effective_config: {
+      quick: { provider: 'chatgpt', model: 'quick-model' }, deep: { provider: 'chatgpt', model: 'deep-model' },
+      research_rounds: 1, risk_rounds: 1, analysts, language: 'tr',
+    },
+    upstream_version: '0.7.0',
+  });
+  expect(normalized).not.toBeNull();
+  render(<AnalysisDetailModal analysis={analysis} report={normalized} isLoading={false}
+    error={null} onClose={jest.fn()} onRefresh={jest.fn()} />);
+  expect(screen.getByText('Yatırım tavsiyesi değildir.')).toBeOnTheScreen();
+  if (version === 'current') {
+    fireEvent.press(screen.getByLabelText('Makro Analist bölümünü genişlet'));
+    expect(screen.getByText('Makroekonomik görünüm')).toBeOnTheScreen();
+    expect(screen.queryByLabelText('Yatırımcı Tepkisi bölümünü genişlet')).toBeNull();
+    fireEvent.press(screen.getByLabelText('Haber Analisti bölümünü genişlet'));
+    expect(screen.getByText('Yatırımcı Tepkisi')).toBeOnTheScreen();
+    expect(screen.getByText('Haberin yatırımcılar üzerindeki etkisi')).toBeOnTheScreen();
+  } else {
+    fireEvent.press(screen.getByLabelText('Yatırımcı Tepkisi bölümünü genişlet'));
+    expect(screen.getByText('Geçmiş yatırımcı duyarlılığı')).toBeOnTheScreen();
+    fireEvent.press(screen.getByLabelText('Haber Analisti bölümünü genişlet'));
+    expect(screen.getByText('Geçmiş haber analizi')).toBeOnTheScreen();
+  }
 });

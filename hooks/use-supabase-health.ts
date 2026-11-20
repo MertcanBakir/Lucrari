@@ -61,7 +61,9 @@ export function useSupabaseHealth(options: UseSupabaseHealthOptions = {}): UseSu
 
   const runCheck = useCallback(async (isManualRefetch = false) => {
     if (isManualRefetch) {
-      log.debug('Sağlık kontrolü yenileniyor (manuel)');
+      log.debug('supabase.health.refresh.requested', {
+        message: 'Supabase health refresh requested.'
+      });
       setIsRefetching(true);
     } else {
       setIsLoading(true);
@@ -77,7 +79,10 @@ export function useSupabaseHealth(options: UseSupabaseHealthOptions = {}): UseSu
     } catch (err: unknown) {
       if (isMountedRef.current) {
         const errorObj = err instanceof Error ? err : new Error('Bilinmeyen bir sağlık kontrolü hatası');
-        log.warn('Health check hook encountered error', errorObj);
+        log.warn('supabase.health.refresh.failed', {
+          message: 'Supabase health refresh failed.',
+          error: errorObj
+        });
         setError(errorObj);
       }
     } finally {
