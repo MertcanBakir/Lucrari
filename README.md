@@ -16,7 +16,7 @@ Lucrari, bireysel yatırımcılar için geliştirilmiş, BIST ve küresel piyasa
 - **Teknoloji Standartları**: Vanilla CSS/StyleSheet yaklaşımı (TailwindCSS kullanılmaz), Google Fonts tipografisi, platforma duyarlı haptik geri bildirimler.
 - **Güvenlik ve İzolasyon**: Kullanıcı verileri Supabase RLS politikaları ile korunur. Kimlik doğrulama işlemleri merkezi `AuthContext` üzerinden yönetilir.
 - **Sıfır Sahte Veri**: Sahte fiyatlar, sabitlenmiş (hardcoded) mock veriler veya tahmini değerler yerine daima Supabase kaynaklı gerçek finansal veriler kullanılır; eksik veriler güvenli durumlarla (fail-closed) ele alınır.
-- **Test Kapsamı**: Proje genelinde kritik finansal hesaplamalar (FIFO, getiri, kur çevrimi, takvim eşleştirmeleri ve izleme listesi mutasyonları) kapsamlı birim ve entegrasyon testleriyle doğrulanır.
+- **Test Kapsamı**: Proje genelinde kritik finansal hesaplamalar (ağırlıklı ortalama maliyet, getiri, kur çevrimi, takvim eşleştirmeleri ve izleme listesi mutasyonları) kapsamlı birim ve entegrasyon testleriyle doğrulanır.
 
 ---
 
@@ -78,6 +78,15 @@ npx expo install --check
 # Git diff kontrolü
 git diff --check
 ```
+
+### Simülatörsüz kritik akış testleri
+
+- `tests/auth-persistence.test.ts`: Gerçek Supabase Auth SDK ve uygulamanın depolama adaptörüyle misafir oturumunun istemci yeniden oluşturulduğunda korunmasını, kayıtlı hesaba geçişin kalıcılığını ve başarılı çıkıştan sonra eski kimliğin dönmemesini doğrular. Yalnız HTTP ve cihaz depolaması taklit edilir; canlı Supabase'e bağlanılmaz.
+- `tests/auth-service.test.ts`: Oturum sorgusu istisna verdiğinde yeni misafir hesabı açılmamasını ve yeniden denemede mevcut kimliğin geri alınmasını kapsar.
+- `tests/hooks/auth-context.test.tsx`: Hesap değişimi, çıkış, görünür bootstrap hatası ve yeniden denemeyi doğrular.
+- `tests/hooks/portfolio.test.tsx` ile `tests/app/portfolio.test.tsx`: Başarılı işlem sonrası pozisyon/değer yenilemesini, kullanıcıya göre işlem kapsamını ve hesap geçişinde önceki portföy detayının kaldırılmasını kapsar.
+
+Bu testler mevcut CI'nin Jest dosya eşleştirmelerine dahildir; simülatör gerektirmez. Uygulama sürecini gerçekten kapatmayı, Keychain şifrelemesini veya cihaz kilidi davranışını doğrulamaz. Depolama adaptörünün yakalayıp yuttuğu hatalar bu test eklemesiyle düzeltilmemiştir; hizmet katmanına ulaşan hatalarla karıştırılmamalıdır.
 
 ### GitHub Actions CI
 
@@ -169,7 +178,7 @@ Lucrari ana sayfasında (`app/(tabs)/index.tsx`), seçili gün olay listesinin a
 
 ### Temel Prensipler ve Güvenlik Sınırları
 - **Yalnızca `get_my_watchlist` ve `set_my_watchlist_item` RPC'leri**: Mobil uygulama `user_watchlist_items` tablosunu doğrudan sorgulamaz; işlemler `auth.uid()` güvencesi altındaki PostgreSQL RPC fonksiyonları üzerinden yürütülür.
-- **Portföy ve Nakit İzolasyonu**: İzleme listesi işlemleri hiçbir alım/satım işlemi, FIFO kaydı veya nakit akışı oluşturmaz.
+- **Portföy İzolasyonu**: İzleme listesi işlemleri alım/satım kaydı oluşturmaz ve isteğe bağlı nakit tutarlarını değiştirmez.
 - **Fiyat Doğruluğu ve Fail-Closed Yaklaşım**: `has_price=false` veya fiyat kaydı bulunmayan enstrümanlar için sahte varsayılan fiyatlar üretilmez; veri güvenli şekilde `—` olarak sunulur. Fiyat güncelliğini yitirmişse `Fiyat güncel olmayabilir` uyarısı verilir.
 - **Aktif Olmayan Varlıklar**: İşlem görmeyen (`is_active=false`) enstrümanlar listede `Artık aktif olarak fiyatlanmıyor` notu ile korunur ve sola kaydırılarak açılan "Sil" butonu ile listeden çıkarılabilir.
 - **Sayfalama, Kompakt Görünüm ve Kart Düzeni**:
@@ -203,15 +212,15 @@ Lucrari ana sayfasında (`app/(tabs)/index.tsx`), seçili gün olay listesinin a
 
 ## 9. Portföy Hareketleri (Portfolio Activity) Modeli
 
-Yatırımlar ekranında varlık tahsis bölümünün hemen altında, kullanıcıların geçmiş alış, satış, para yatırma ve para çekme işlemlerini inceleyebilecekleri **Portföy Hareketleri** (`app/portfolio-activity.tsx`) modülü yer alır.
+Yatırımlar ekranında varlık tahsis bölümünün hemen altında, kullanıcıların geçmiş alış ve satış işlemlerini inceleyebilecekleri **Portföy Hareketleri** (`app/portfolio-activity.tsx`) modülü yer alır.
 
 ### Temel Prensipler ve Güvenlik Sınırları
 - **`get_my_portfolio_activity` RPC Sözleşmesi**: İşlemler `auth.uid()` ve portföy sahipliği doğrulaması altındaki PostgreSQL RPC fonksiyonu üzerinden 4 parçalı keyset cursor (`occurred_at`, `created_at`, `source_kind`, `activity_id`) ile sayfalanır.
 - **Tarihsel Değer Güvencesi**: Geçmiş işlemler için canlı fiyat, güncel kur veya live FX dönüşümü yapılmaz; `quantity`, `unit_price` ve `gross_amount` yalnızca işlem anındaki değerlerle sunulur.
 - **Geri Alınan İşlemler (Reversal)**: Geri alınmış hareketler (`is_reversed: true`) gizlenmez; görsel olarak pasifleştirilerek `Geri Alındı` etiketi ve geri alınma nedeni ile sunulur.
-- **Salt Okunur Denetim**: Hareketler ekranından veya detay modalından herhangi bir alım/satım, geri alma veya nakit mutasyonu tetiklenmez.
+- **Salt Okunur Denetim**: Hareketler ekranından veya detay modalından herhangi bir alım/satım veya geri alma işlemi tetiklenmez.
 - **Fail-Closed Görünüm Durumu ve Sıfır-Kare İzolasyonu**: `resolvePortfolioActivityViewState` ve `resolveUserScopedActivityState` sayesinde oturum geçişlerinde önceki kullanıcının/portföyün hareketleri bir render karesi bile sızdırılmaz.
-- **Reaktif Güncelleme**: Portföyde gerçekleşen alım/satım/nakit işlemlerinde `subscribePortfolioChanges` otomatik olarak önbelleği geçersiz kılar ve listeyi günceller.
+- **Reaktif Güncelleme**: Portföyde gerçekleşen alış/satış kayıtları ve isteğe bağlı nakit güncellemelerinde `subscribePortfolioChanges` otomatik olarak önbelleği geçersiz kılar ve listeyi günceller.
 
 ---
 
@@ -270,3 +279,43 @@ Yeni analizde tarih alanının ardından **Analiz Vadesi** seçilir. Kısa (1 ay
 ```env
 EXPO_PUBLIC_ANALYSIS_API_URL=https://analysis.example.com
 ```
+
+
+## Yatırımlar: Sade Portföy Takibi
+
+- **İşlem kaydı:** Varlık, adet ve birim fiyat girilir; işlem zamanı kayıt sırasında otomatik atanır. Mevcut alış/satış tasarımı, piyasa sekmeleri ve satış yüzdesi kısayolları korunur. Alış için nakit kurulumu veya bakiye yeterliliği aranmaz. Satış yalnız eldeki adet kadar yapılabilir. Sunucu, geçmiş tarihli kayıtlar ve geri almalar dahil işlem sırasının hiçbir noktasında adedin negatife düşmemesini kontrol eder.
+- **Maliyet yöntemi:** Hareketli ağırlıklı ortalama kullanılır. Alış, kalan maliyete eklenir; satış maliyeti, satış öncesi ortalama birim maliyet × satılan adettir. Satış, kalan birim maliyeti değiştirmez. Tam kapanışta kalan maliyet sıfırlanır. Sıralama `transaction_at`, `created_at`, `id` alanlarıyladır.
+- **Nakit isteğe bağlıdır:** `portfolio_cash_accounts.current_balance` alanında elle güncellenen TRY ve USD tutarları saklanır. Kayıt yoksa kullanıcı nakit eklememiş kabul edilir. Alış/satışlar bu tutarları değiştirmez. Para yatırma/çekme defteri ve zorunlu ilk kurulum bulunmaz.
+- **Değer ve kâr/zarar:** Toplam portföy değeri = açık pozisyonların güncel değeri + isteğe bağlı nakit. Açık pozisyon kâr/zararı kalan maliyetle karşılaştırılır. Satış kâr/zararı ayrı gösterilir ve tamamen satılmış varlıkları da kapsar; portföy değerine ayrıca eklenmez. Günlük değişim, mevcut adetlerin fiyat verisindeki günlük değişimiyle hesaplanır; gün içi işlem zamanına göre kişisel günlük getiri değildir.
+- **Kur:** TRY/USD gösterimi güncel USD/TRY kuru kullanır. USD maliyetleri de güncel kurla çevrilir; alış tarihinden itibaren oluşan kur getirisi ayrı hesaplanmaz. Eksik fiyat/kur için kısmi değer ve uyarı gösterilir.
+- **Veri akışı:** Ekran → `usePortfolio` → `portfolio-service` → sahipliği doğrulayan Supabase fonksiyonları. `get_portfolio_positions` açık pozisyonları, `get_portfolio_realized_pnl` kapatılmış varlıklar dahil satış kârını getirir. `get_portfolio_cash` ve `set_portfolio_cash` elle girilen nakdi yönetir. Alış ve satışlar `record_portfolio_transaction` üzerinden tekrar gönderime dayanıklı olarak kaydedilir. İşlem geçmişi yalnız alış ve satışları sayfalar.
+- **Geçiş:** `20261119000000_simplify_portfolio.sql` mevcut alış/satışları korur; mevcut net nakdi elle tutulan bakiyeye dönüştürür. `portfolio_fifo_matches`, `portfolio_cash_flows`, ilgili fonksiyonlar ve otomatik nakit kurulum tetikleyicisi kaldırılır. Eski uygulanmış geçiş dosyaları veritabanının yeniden kurulabilmesi için geçmiş olarak saklanır; çalışan sistemde eski hesap motoru bulunmaz.
+- **Değer geçmişi:** Önceki anlık değer kayıtları ve o günün fiyatları korunur. `calculation_version < 2` kayıtları eski hesap yöntemiyle üretilmiş tarihsel verilerdir ve kısmi olarak işaretlenir. Yeni kayıtlar ortalama maliyet kullanır (`calculation_version = 2`). Elle girilen nakdin geçmişi bulunmadığı ve yalnız son piyasa fiyatları mevcut olduğu için anlık değer üretimi yalnız bugünün İstanbul tarihine açıktır. Nakit akışı gerektiren zaman ağırlıklı getiri alanları kaldırılmıştır.
+
+### Veritabanı ve Testler
+
+```sh
+supabase db push --linked
+supabase db query --linked --file supabase/tests/portfolio_simple_model_test.sql
+npm run typecheck
+npm run lint
+npm test
+npm run test:ui
+npm run test:hooks
+npm run test:app
+```
+
+SQL kabul testi, geçici veriler üzerinde bakiyesiz alış, tekrar gönderim, kısmi/tam satış, ortalama maliyet, satıştan sonra ek alış, işlem geri alma, geçmişte fazla satışın reddi, kullanıcı izolasyonu ve anlık değer üretimini doğrular; sonunda bütün test verilerini geri alır.
+
+
+## Portföy Grafiği
+
+Yatırımlar özetindeki grafik ikonu `app/portfolio-chart.tsx` ekranını açar. Mevcut para birimi ve piyasa seçimi taşınır; ekran içinde TRY/USD, Tümü/BIST/NASDAQ/Kripto/Fonlar/FX-Altın, 1 hafta/1 ay/3 ay/6 ay/1 yıl/tümü ve Değer/Kâr-Zarar seçilebilir. Grafik parmakla incelenebilir; parmak bırakılınca seçilen tarih korunur. Grafik içindeki kaydırma sayfa kaydırmasına devredilmez. Tarih değişimlerinde, sık hareketlerde sınırlandırılmış hafif seçim titreşimi verilir; aynı tarihte tekrarlanmaz. Erişilebilirlik eylemleriyle önceki/sonraki tarih seçimi de desteklenir. Çizim Expo SDK 54 ile uyumlu `react-native-svg` üzerinden yapılır. Paket Expo Go içinde bulunur; mevcut özel geliştirme istemcisine eklenmesi için yeni bir native derleme gerekir.
+
+- `portfolio_snapshots` toplam değer, günün USD/TRY kuru ve kayıt zamanını; `portfolio_snapshot_positions` varlık bazındaki tarihsel değerleri saklar. `portfolio_snapshot_markets`, yeni kayıtlar için kapatılmış pozisyonların satış kârı dahil piyasa toplamlarını saklar. TRY/USD dönüşümü günün kaydedilmiş kuruyla yapılır; güncel kur geçmişe uygulanmaz.
+- Eski kur bilgisi yalnız snapshot pozisyonlarında gerçekten kayıtlıysa başlığa taşınır. Geçmiş kur eksikse ilgili yabancı para noktası boş kalır. Eski piyasa bazında gerçekleşmiş kâr bulunmadığından, filtreli Kâr/Zarar geçmişi `market_breakdown_complete` işaretli yeni kayıtlardan başlar. Eski toplam Kâr/Zarar, başlıktaki gerçekleşmiş + gerçekleşmemiş kâr toplamından okunur; hesap yöntemi değişikliği ekranda belirtilir.
+- Değer, seçili yatırımların toplam piyasa değeridir; yalnız Tümü seçimi isteğe bağlı nakdi içerir. Kâr/Zarar gerçekleşmiş + gerçekleşmemiş kârdır ve nakit içermez. Bu göstergeler para girişlerinden arındırılmış dönem getirisi veya zaman ağırlıklı getiri yüzdesi olarak sunulmaz.
+- `get_portfolio_chart` kullanıcı/portföy sahipliğini ve filtreleri doğrular. En fazla 600 tarih döner; uzun geçmişte zaman dilimlerinin ilk/son, minimum/maksimum ve eksik veri noktaları korunarak çizim yükü sınırlandırılır. Eksik günler sıfıra çevrilmez, eksik kur/kâr noktaları çizgiyle birleştirilmez.
+- `refresh_portfolio_chart`, ekran açıldığında veya yenilendiğinde yalnız kullanıcının bugünkü snapshot'ını günceller. Alış/satış ve nakit değişiklikleri grafik önbelleğini geçersiz kılar. Grafik sorguları kullanıcı, dönem, piyasa, para birimi ve göstergeye göre ayrılır; filtre/oturum değişiminde eski sonuç gösterilmez.
+- `private.capture_portfolio_chart_snapshots()` ve Supabase `pg_cron` işi `lucrari-portfolio-chart-snapshots` her saatin 55. dakikasında uygulama kapalıyken de kayıt üretir. İstanbul takvim günü içinde aynı satır güncellenir; önceki günler değiştirilmez. Tek bir portföyün fiyat hatası diğer portföyleri durdurmaz. İşin sonucu ve uyarıları Supabase Cron kayıtlarından izlenir.
+- Geçişler: `20261119001000_portfolio_chart.sql` ve değerleme/grafik kurunu eşitleyen `20261119002000_consistent_snapshot_chart_fx.sql`. SQL kabul testi: `supabase/tests/portfolio_chart_test.sql`; tarihsel kur, piyasa filtreleri, gerçekleşmiş kâr, eski eksik veriler, örnekleme sınırı, kullanıcı izolasyonu ve sıfırlama zincirini test verilerini geri alarak doğrular.

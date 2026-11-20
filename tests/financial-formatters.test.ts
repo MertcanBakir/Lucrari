@@ -4,7 +4,6 @@ import {
   formatLatency,
   getLatencyColor,
   formatCurrency,
-  formatAvailableCash,
   formatPercentage,
   formatDateTime,
   EMPTY_VALUE_PLACEHOLDER,
@@ -32,54 +31,6 @@ describe('Financial Formatters & Standards', () => {
 
     const usdFormatted = formatCurrency(50.25, 'USD', 'en-US');
     assert.equal(usdFormatted, '$50.25');
-  });
-
-  describe('formatAvailableCash (Missing vs Real Zero Separation)', () => {
-    it('should return isAvailable=false and placeholder for null, undefined, NaN, Infinity, or negative', () => {
-      const nullRes = formatAvailableCash(null, 'TRY');
-      assert.strictEqual(nullRes.isAvailable, false);
-      assert.strictEqual(nullRes.formatted, EMPTY_VALUE_PLACEHOLDER);
-      assert.strictEqual(nullRes.rawAmount, null);
-
-      const undefRes = formatAvailableCash(undefined, 'USD');
-      assert.strictEqual(undefRes.isAvailable, false);
-      assert.strictEqual(undefRes.formatted, EMPTY_VALUE_PLACEHOLDER);
-      assert.strictEqual(undefRes.rawAmount, null);
-
-      const nanRes = formatAvailableCash(NaN, 'TRY');
-      assert.strictEqual(nanRes.isAvailable, false);
-      assert.strictEqual(nanRes.formatted, EMPTY_VALUE_PLACEHOLDER);
-      assert.strictEqual(nanRes.rawAmount, null);
-
-      const infRes = formatAvailableCash(Infinity, 'TRY');
-      assert.strictEqual(infRes.isAvailable, false);
-      assert.strictEqual(infRes.formatted, EMPTY_VALUE_PLACEHOLDER);
-      assert.strictEqual(infRes.rawAmount, null);
-
-      const negRes = formatAvailableCash(-50, 'USD');
-      assert.strictEqual(negRes.isAvailable, false);
-      assert.strictEqual(negRes.formatted, EMPTY_VALUE_PLACEHOLDER);
-      assert.strictEqual(negRes.rawAmount, null);
-    });
-
-    it('should format real zero 0 as valid 0.00 currency without placeholder', () => {
-      const zeroTry = formatAvailableCash(0, 'TRY', 'tr-TR');
-      assert.strictEqual(zeroTry.isAvailable, true);
-      assert.strictEqual(zeroTry.rawAmount, 0);
-      assert.ok(zeroTry.formatted.includes('0,00') || zeroTry.formatted.includes('₺'));
-
-      const zeroUsd = formatAvailableCash(0, 'USD', 'en-US');
-      assert.strictEqual(zeroUsd.isAvailable, true);
-      assert.strictEqual(zeroUsd.rawAmount, 0);
-      assert.strictEqual(zeroUsd.formatted, '$0.00');
-    });
-
-    it('should format valid positive available cash correctly', () => {
-      const posUsd = formatAvailableCash(1250.5, 'USD', 'en-US');
-      assert.strictEqual(posUsd.isAvailable, true);
-      assert.strictEqual(posUsd.rawAmount, 1250.5);
-      assert.strictEqual(posUsd.formatted, '$1,250.50');
-    });
   });
 
   it('should format percentage with sign and proper precision', () => {

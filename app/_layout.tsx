@@ -29,6 +29,7 @@ function RootContent() {
     <NavigationThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="portfolio-chart" options={{ headerShown: false }} />
         <Stack.Screen name="portfolio-activity" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
         <Stack.Screen name="system-health" options={{ headerShown: false }} />

@@ -1,14 +1,4 @@
-/**
- * Lucrari — Cash Account Setup Modal
- * 
- * Enables legacy and uninitialized portfolio users to set their opening TRY and USD cash balances.
- * Complies with strict product rules:
- * - Opening balance is >= 0 (user can enter 0).
- * - Validates using locale-aware parseFinancialNumber.
- * - Explains that past transactions do not mutate this initial cash boundary.
- */
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -29,20 +19,22 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { parseFinancialNumber } from '@/utils/financial-parser';
 
 import { formatPortfolioRpcError } from '@/utils/portfolio-errors';
-import { generateUUID } from '@/utils/uuid';
-import { getOrCreateMutationIntent, type MutationIntent } from '@/utils/mutation-intent';
 
-export interface CashAccountSetupModalProps {
+export interface CashBalanceModalProps {
   visible: boolean;
+  tryBalance: number;
+  usdBalance: number;
   onClose: () => void;
-  onInitialize: (tryBalance: number, usdBalance: number, clientRequestId?: string) => Promise<void>;
+  onSave: (tryBalance: number, usdBalance: number) => Promise<void>;
 }
 
-export function CashAccountSetupModal({
+export function CashBalanceModal({
   visible,
+  tryBalance,
+  usdBalance,
   onClose,
-  onInitialize,
-}: CashAccountSetupModalProps) {
+  onSave,
+}: CashBalanceModalProps) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const theme = Colors[isDark ? 'dark' : 'light'];
@@ -52,11 +44,13 @@ export function CashAccountSetupModal({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  const intentRef = React.useRef<MutationIntent | null>(null);
-
-  const currentPayloadKey = `${tryInput}:${usdInput}`;
+  const inFlight = React.useRef(false);
+  useEffect(() => {
+    if (visible) { setTryInput(String(tryBalance)); setUsdInput(String(usdBalance)); setValidationError(null); }
+  }, [visible, tryBalance, usdBalance]);
 
   const handleSave = async () => {
+    if (inFlight.current) return;
     Keyboard.dismiss();
     setValidationError(null);
 
@@ -72,34 +66,25 @@ export function CashAccountSetupModal({
       return;
     }
 
-    const intent = getOrCreateMutationIntent(intentRef.current, currentPayloadKey, generateUUID);
-    intentRef.current = intent;
-
     try {
+      inFlight.current = true;
       setIsSubmitting(true);
-      await onInitialize(tryParse.value, usdParse.value, intent.clientRequestId);
-      intentRef.current = null;
+      await onSave(tryParse.value, usdParse.value);
       Alert.alert(
-        'Nakit Hesabı Kuruldu',
-        'Nakit hesaplarınız başarıyla başlatıldı ve portföy toplamına dahil edildi.'
+        'Nakit Güncellendi',
+        'Nakit tutarınız portföy toplamına dahil edildi.'
       );
       onClose();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('portfolio_cash_account_already_initialized')) {
-        Alert.alert('Bilgi', 'Nakit hesapları bu portföy için zaten kurulmuş.');
-        intentRef.current = null;
-        onClose();
-      } else {
-        Alert.alert('Hata', `Nakit hesabı kurulumu başarısız: ${formatPortfolioRpcError(err)}`);
-      }
+      Alert.alert('Hata', formatPortfolioRpcError(err));
     } finally {
+      inFlight.current = false;
       setIsSubmitting(false);
     }
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={() => { if (!isSubmitting) onClose(); }}>
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
         <View style={styles.modalOverlay}>
           <KeyboardAvoidingView
@@ -114,7 +99,7 @@ export function CashAccountSetupModal({
                     <IconSymbol size={20} name="banknote" color={theme.tint} />
                   </View>
                   <Text style={[styles.headerTitle, { color: theme.text }]}>
-                    Nakit Bakiyesini Kur
+                    Nakit Tutarını Düzenle
                   </Text>
                 </View>
                 <TouchableOpacity onPress={onClose} hitSlop={10} disabled={isSubmitting}>
@@ -124,7 +109,7 @@ export function CashAccountSetupModal({
 
               {/* Description */}
               <Text style={[styles.descriptionText, { color: theme.textSecondary }]}>
-                Portföyünüzün güncel toplam değerini doğru hesaplamak için mevcut serbest nakdinizi girin. Bu işlem tek seferliktir; geçmiş işlemleriniz bu açılış nakdini etkilemez.
+                İsterseniz boşta duran TL ve dolarınızı portföy toplamına ekleyebilirsiniz. Alış ve satış kayıtları bu tutarları değiştirmez; değiştikçe buradan güncelleyebilirsiniz.
               </Text>
 
               {/* TRY Cash Input */}

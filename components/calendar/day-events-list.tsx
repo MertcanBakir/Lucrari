@@ -305,12 +305,12 @@ export function DayEventsList({
                     )}
                   </View>
 
-                  <View style={styles.timeTag}>
+                  {!isEarnings && <View style={styles.timeTag}>
                     <IconSymbol size={12} name="calendar" color={theme.textMuted} />
                     <Text style={[styles.timeTagText, { color: theme.textSecondary }]}>
                       {item.timeLabel}
                     </Text>
-                  </View>
+                  </View>}
                 </View>
 
                 {/* Event Main Content */}

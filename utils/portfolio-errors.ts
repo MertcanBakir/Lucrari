@@ -149,30 +149,21 @@ export function formatPortfolioRpcError(err: unknown): string {
     return 'Geçersiz sayfalama kaynak türü.';
   }
 
+  if (combined.includes('portfolio_invalid_cash_amount')) return 'Nakit tutarı sıfır veya pozitif bir sayı olmalıdır.';
+
+  if (combined.includes('portfolio_chart_invalid_filter')) return 'Geçersiz grafik filtresi seçildi.';
+  if (combined.includes('portfolio_instrument_price_missing')) return 'Bazı varlıkların fiyatları alınamadığı için güncel değer kaydedilemedi.';
+  if (combined.includes('portfolio_fx_price_missing')) return 'Dolar kuru alınamadığı için güncel değer kaydedilemedi.';
+
   // Domain-specific PostgreSQL RPC errors
   if (combined.includes('42501') || combined.includes('permission denied')) {
     return 'Bu işlemi gerçekleştirmek için yetkiniz bulunmuyor.';
-  }
-  if (combined.includes('portfolio_insufficient_cash_for_reversal')) {
-    return 'Geri alma işlemi nakit bakiyesini negatife düşüreceği için gerçekleştirilemedi.';
   }
   if (combined.includes('portfolio_insufficient_position_for_reversal')) {
     return 'Geri alma işlemi pozisyon miktarını negatife düşüreceği için gerçekleştirilemedi.';
   }
   if (combined.includes('portfolio_insufficient_position')) {
     return 'Yetersiz pozisyon miktarı. Portföyünüzde bulunmayan veya sahip olduğunuzdan fazla miktarda satış yapamazsınız.';
-  }
-  if (combined.includes('portfolio_insufficient_cash')) {
-    return 'Yetersiz nakit bakiyesi. Lütfen nakit tutarınızı kontrol edin veya para yatırın.';
-  }
-  if (combined.includes('portfolio_cash_account_already_initialized')) {
-    return 'Bu portföy için nakit hesapları zaten başlatılmış.';
-  }
-  if (combined.includes('portfolio_cash_account_not_initialized')) {
-    return 'Nakit hesabı henüz kurulmamış. Lütfen önce nakit bakiyenizi kurun.';
-  }
-  if (combined.includes('portfolio_cash_invariant_violation')) {
-    return 'Nakit bakiyesi negatif olamaz. İşlem finansal güvenlik kuralları gereği iptal edildi.';
   }
   if (combined.includes('portfolio_idempotency_conflict')) {
     return 'Bu işlem daha önce farklı parametrelerle gönderildi. Lütfen sayfayı yenileyip tekrar deneyin.';
@@ -185,9 +176,6 @@ export function formatPortfolioRpcError(err: unknown): string {
   }
   if (combined.includes('portfolio_transaction_already_reversed')) {
     return 'Bu işlem zaten geri alınmış.';
-  }
-  if (combined.includes('portfolio_cash_flow_already_reversed')) {
-    return 'Bu nakit hareketi zaten geri alınmış.';
   }
   if (combined.includes('PGRST202') || combined.includes('Could not find the function')) {
     return 'Veritabanı güncellemesi gerekli: İstenen fonksiyon sunucuda bulunamadı.';

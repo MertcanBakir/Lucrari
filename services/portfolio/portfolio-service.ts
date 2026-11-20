@@ -1,15 +1,4 @@
-/**
- * Lucrari — Supabase Portfolio Service
- * 
- * Provides live, strongly-typed RPC and database operations for portfolio management:
- * - Provisioning / ensuring default user portfolio (with in-flight deduplication & hardened error handling)
- * - Fetching real-time FIFO positions via `get_portfolio_positions` RPC
- * - Fetching cash state & balances via single source of truth `get_portfolio_cash_state` RPC
- * - Idempotent BUY / SELL transactions via `record_portfolio_transaction` RPC
- * - Idempotent DEPOSIT / WITHDRAWAL cash flows via `record_cash_flow` RPC
- * - Reversing transactions and cash flows with audit trail
- * - Atomic reset via `reset_my_investments` RPC
- */
+/** Portfolio operations with moving average cost and optional manual cash. */
 
 import { getSupabaseClient } from '@/services/supabase/client';
 import { createScopedLogger } from '@/utils/logger';
@@ -19,13 +8,11 @@ import { fetchUsdTryRate, type FxRateInfo } from './fx-rate-service';
 import type {
   Portfolio,
   PortfolioPosition,
-  PortfolioCashState,
-  InitializeCashAccountsResult,
+  PortfolioCash,
+  PortfolioRealizedPnl,
   TransactionRecordResult,
-  CashFlowRecordResult,
   ResetInvestmentsResult,
   TransactionType,
-  CashFlowType,
   CurrencyCode,
 } from '@/types/database';
 
@@ -42,14 +29,15 @@ export function notifyPortfolioChanged(): void {
     try {
       listener();
     } catch (err) {
-      log.error('PortfolioChangeListener hatası', { error: String(err) });
+      log.error('portfolio.listener.failed', {
+        message: 'Portfolio listener failed.',
+        error: err
+      });
     }
   });
 }
 
-/**
- * Subscribes to portfolio mutations (transactions, cash flows, resets) to trigger automatic reactive updates.
- */
+/** Subscribe to successful portfolio mutations. */
 export function subscribePortfolioChanges(listener: PortfolioChangeListener): () => void {
   portfolioChangeListeners.add(listener);
   return () => {
@@ -57,12 +45,6 @@ export function subscribePortfolioChanges(listener: PortfolioChangeListener): ()
   };
 }
 
-export interface InitializePortfolioCashAccountsParams {
-  portfolioId: string;
-  tryOpeningBalance: number;
-  usdOpeningBalance: number;
-  clientRequestId?: string;
-}
 
 export interface RecordTransactionParams {
   portfolioId: string;
@@ -76,15 +58,6 @@ export interface RecordTransactionParams {
   notes?: string | null;
 }
 
-export interface RecordCashFlowParams {
-  portfolioId: string;
-  flowType: CashFlowType;
-  amount: number;
-  currency: CurrencyCode;
-  flowAt?: string;
-  clientRequestId?: string;
-  notes?: string | null;
-}
 
 export interface ReverseTransactionParams {
   transactionId: string;
@@ -92,11 +65,6 @@ export interface ReverseTransactionParams {
   clientRequestId?: string;
 }
 
-export interface ReverseCashFlowParams {
-  cashFlowId: string;
-  reason: string;
-  clientRequestId?: string;
-}
 
 export interface ResetInvestmentsParams {
   clientRequestId: string;
@@ -116,7 +84,10 @@ const inFlightDefaultPortfolio = new Map<string, Promise<Portfolio>>();
 export async function ensureDefaultPortfolio(userId: string): Promise<Portfolio> {
   const existing = inFlightDefaultPortfolio.get(userId);
   if (existing) {
-    log.debug('Eşzamanlı default portfolio sorgusu birleştirildi (deduplication)', { userId });
+    log.debug('portfolio.default.deduplicated', {
+      message: 'Portfolio default deduplicated.',
+      context: { userId }
+    });
     return existing;
   }
 
@@ -136,17 +107,26 @@ export async function ensureDefaultPortfolio(userId: string): Promise<Portfolio>
         .maybeSingle();
 
       if (fetchError) {
-        log.error('Portföy aranırken sorgu hatası alındı', { error: fetchError.message });
+        log.error('portfolio.default.lookup.failed', {
+          message: 'Portfolio default lookup failed.',
+          error: fetchError
+        });
         throw createPortfolioOperationError('Portföy bilgisi alınamadı', fetchError);
       }
 
       if (existingPort) {
-        log.debug('Mevcut portföy doğrulandı', { portfolioId: existingPort.id, name: existingPort.name });
+        log.debug('portfolio.default.found', {
+          message: 'Portfolio default found.',
+          context: { portfolioId: existingPort.id }
+        });
         return existingPort;
       }
 
       // 2. No portfolio exists — provision default portfolio
-      log.info('Kullanıcı için yeni varsayılan portföy oluşturuluyor...', { userId });
+      log.info('portfolio.default.creating', {
+        message: 'Portfolio default creating.',
+        context: { userId }
+      });
 
       const { data: newPortfolio, error: createError } = await client
         .from('portfolios')
@@ -162,7 +142,10 @@ export async function ensureDefaultPortfolio(userId: string): Promise<Portfolio>
       if (createError) {
         // In case of concurrent unique constraint race (23505), re-fetch existing default portfolio
         if (createError.code === '23505' || createError.message?.includes('duplicate') || createError.message?.includes('unique')) {
-          log.warn('Eşzamanlı oluşturma çakışması tespit edildi, varsayılan portföy yeniden sorgulanıyor...', { userId });
+          log.warn('portfolio.default.conflict', {
+            message: 'Portfolio default conflict.',
+            context: { userId }
+          });
           const { data: reFetched, error: reFetchError } = await client
             .from('portfolios')
             .select('*')
@@ -172,7 +155,10 @@ export async function ensureDefaultPortfolio(userId: string): Promise<Portfolio>
             .maybeSingle();
 
           if (reFetchError) {
-            log.error('Çakışma sonrası portföy yeniden sorgulanamadı', { error: reFetchError.message });
+            log.error('portfolio.default.refetch.failed', {
+              message: 'Portfolio default refetch failed.',
+              error: reFetchError
+            });
             throw createPortfolioOperationError('Portföy bilgisi alınamadı', reFetchError);
           }
 
@@ -181,8 +167,10 @@ export async function ensureDefaultPortfolio(userId: string): Promise<Portfolio>
           }
         }
 
-        const errMsg = createError?.message || 'Varsayılan portföy oluşturulamadı.';
-        log.error(errMsg, { error: createError });
+        log.error('portfolio.default.create.failed', {
+          message: 'Portfolio default create failed.',
+          error: createError
+        });
         throw createPortfolioOperationError('Varsayılan portföy oluşturulamadı', createError);
       }
 
@@ -190,13 +178,19 @@ export async function ensureDefaultPortfolio(userId: string): Promise<Portfolio>
         throw new PortfolioOperationError('Varsayılan portföy oluşturulamadı.');
       }
 
-      log.info('Varsayılan portföy başarıyla oluşturuldu', { portfolioId: newPortfolio.id });
+      log.info('portfolio.default.created', {
+        message: 'Portfolio default created.',
+        context: { portfolioId: newPortfolio.id }
+      });
       return newPortfolio;
     } catch (error) {
       if (error instanceof PortfolioOperationError) {
         throw error;
       }
-      log.error('Portföy sağlama hatası', { error: String(error) });
+      log.error('portfolio.default.failed', {
+        message: 'Portfolio default failed.',
+        error: error
+      });
       throw createPortfolioOperationError('Portföy bilgisi alınamadı', error);
     }
   })();
@@ -223,7 +217,11 @@ export async function fetchPortfolioPositions(portfolioId: string): Promise<Port
     });
 
     if (error) {
-      log.error('Pozisyonlar alınamadı', { portfolioId, error: error.message });
+      log.error('portfolio.positions.rpc.failed', {
+        message: 'Portfolio positions rpc failed.',
+        context: { portfolioId },
+        error: error
+      });
       throw createPortfolioOperationError('Pozisyonlar yüklenemedi', error);
     }
 
@@ -232,118 +230,78 @@ export async function fetchPortfolioPositions(portfolioId: string): Promise<Port
     if (error instanceof PortfolioOperationError) {
       throw error;
     }
-    log.error('fetchPortfolioPositions istisnası', { error: String(error) });
+    log.error('portfolio.positions.failed', {
+      message: 'Portfolio positions failed.',
+      error: error
+    });
     throw createPortfolioOperationError('Pozisyonlar yüklenemedi', error);
   }
 }
 
-/**
- * Fetches cash account initialization state and balances for a portfolio via typed `get_portfolio_cash_state` RPC.
- * Single source of truth for cash state and multi-currency balances.
- */
-export async function fetchPortfolioCashState(portfolioId: string): Promise<PortfolioCashState> {
-  const client = getSupabaseClient();
-
-  try {
-    const { data, error } = await client.rpc('get_portfolio_cash_state', {
-      p_portfolio_id: portfolioId,
-    });
-
-    if (error) {
-      log.error('Nakit durumu alınamadı', { portfolioId, error: error.message });
-      throw createPortfolioOperationError('Nakit durumu yüklenemedi', error);
-    }
-
-    return {
-      portfolioId: data?.portfolio_id || portfolioId,
-      isInitialized: Boolean(data?.is_initialized),
-      balances: Array.isArray(data?.balances)
-        ? data.balances.map((b) => ({
-            currency: b.currency,
-            openingBalance: b.opening_balance != null ? Number(b.opening_balance) : null,
-            currentBalance: b.current_balance != null ? Number(b.current_balance) : null,
-            initializedAt: b.initialized_at ?? null,
-          }))
-        : [],
-    };
-  } catch (error) {
-    if (error instanceof PortfolioOperationError) {
-      throw error;
-    }
-    log.error('fetchPortfolioCashState istisnası', { error: String(error) });
-    throw createPortfolioOperationError('Nakit durumu yüklenemedi', error);
+/** Reject malformed financial responses instead of converting missing values to zero. */
+function readAmount(value: unknown, nonNegative = false): number {
+  if ((typeof value !== 'number' && typeof value !== 'string') || value === '') {
+    throw createPortfolioOperationError('Geçersiz finansal tutar alındı.');
   }
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || (nonNegative && amount < 0)) {
+    throw createPortfolioOperationError('Geçersiz finansal tutar alındı.');
+  }
+  return amount;
 }
 
-/**
- * Initializes TRY and USD cash accounts for a portfolio with explicit opening balances via typed RPC.
- */
-export async function initializePortfolioCashAccounts(
-  params: InitializePortfolioCashAccountsParams
-): Promise<InitializeCashAccountsResult> {
-  const client = getSupabaseClient();
-  const clientRequestId = params.clientRequestId || generateUUID();
+/** Reads optional manually maintained cash; missing accounts mean no cash entered. */
+export async function fetchPortfolioCash(portfolioId: string): Promise<PortfolioCash> {
+ const { data, error } = await getSupabaseClient().rpc('get_portfolio_cash', { p_portfolio_id: portfolioId });
+ if (error) throw createPortfolioOperationError('Nakit tutarı yüklenemedi', error);
+ return { tryBalance: readAmount(data?.try_balance, true), usdBalance: readAmount(data?.usd_balance, true) };
+}
 
-  try {
-    const { data, error } = await client.rpc('initialize_portfolio_cash_accounts', {
-      p_portfolio_id: params.portfolioId,
-      p_try_opening_balance: params.tryOpeningBalance,
-      p_usd_opening_balance: params.usdOpeningBalance,
-      p_client_request_id: clientRequestId,
-    });
+export async function setPortfolioCash(params: PortfolioCash & { portfolioId: string }): Promise<void> {
+ const { error } = await getSupabaseClient().rpc('set_portfolio_cash', {
+  p_portfolio_id: params.portfolioId, p_try_balance: params.tryBalance, p_usd_balance: params.usdBalance,
+ });
+ if (error) throw createPortfolioOperationError('Nakit tutarı kaydedilemedi', error);
+ notifyPortfolioChanged();
+}
 
-    if (error) {
-      log.error('Nakit hesabı başlatılamadı', { params, error: error.message });
-      throw createPortfolioOperationError('Nakit hesabı başlatılamadı', error);
-    }
-
-    log.info('Nakit hesabı başarıyla başlatıldı', {
-      portfolioId: params.portfolioId,
-      isInitialized: data?.is_initialized,
-      wasReplayed: data?.was_replayed,
-    });
-
-    notifyPortfolioChanged();
-    return data as InitializeCashAccountsResult;
-  } catch (error) {
-    if (error instanceof PortfolioOperationError) {
-      throw error;
-    }
-    log.error('initializePortfolioCashAccounts istisnası', { error: String(error) });
-    throw createPortfolioOperationError('Nakit hesabı başlatılamadı', error);
-  }
+export async function fetchRealizedPnl(portfolioId: string): Promise<PortfolioRealizedPnl> {
+ const { data, error } = await getSupabaseClient().rpc('get_portfolio_realized_pnl', { p_portfolio_id: portfolioId });
+ if (error) throw createPortfolioOperationError('Satış kârı yüklenemedi', error);
+ return { tryPnl: readAmount(data?.try_pnl), usdPnl: readAmount(data?.usd_pnl) };
 }
 
 export interface CombinedPortfolioData {
   positions: PortfolioPosition[];
-  cashState: PortfolioCashState;
+  cash: PortfolioCash;
+  realizedPnl: PortfolioRealizedPnl;
   fxRateInfo: FxRateInfo;
 }
 
 const inFlightPortfolioFetches = new Map<string, Promise<CombinedPortfolioData>>();
 
-/**
- * Fetches positions, cash state, and live USD/TRY FX rate in parallel.
- * Exclusively uses `get_portfolio_cash_state` as the single source of cash truth.
- * Automatically deduplicates concurrent in-flight requests for the same portfolioId.
- */
+/** Fetch holdings, manual cash, realized sale profit and FX concurrently. */
 export async function fetchPortfolioDataCombined(
   portfolioId: string,
   options?: { forceRefresh?: boolean }
 ): Promise<CombinedPortfolioData> {
   const existing = inFlightPortfolioFetches.get(portfolioId);
   if (existing) {
-    log.debug('Eşzamanlı portföy sorgusu birleştirildi (deduplication)', { portfolioId });
+    log.debug('portfolio.request.deduplicated', {
+      message: 'Portfolio request deduplicated.',
+      context: { portfolioId }
+    });
     return existing;
   }
 
   const fetchPromise = (async (): Promise<CombinedPortfolioData> => {
-    const [positions, cashState, fxRateInfo] = await Promise.all([
+    const [positions, cash, fxRateInfo, realizedPnl] = await Promise.all([
       fetchPortfolioPositions(portfolioId),
-      fetchPortfolioCashState(portfolioId),
+      fetchPortfolioCash(portfolioId),
       fetchUsdTryRate(options),
+      fetchRealizedPnl(portfolioId),
     ]);
-    return { positions, cashState, fxRateInfo };
+    return { positions, cash, fxRateInfo, realizedPnl };
   })();
 
   inFlightPortfolioFetches.set(portfolioId, fetchPromise);
@@ -365,10 +323,7 @@ export function clearInFlightPortfolioFetches(): void {
   inFlightDefaultPortfolio.clear();
 }
 
-/**
- * Atomically records an owned portfolio BUY / SELL transaction via typed `record_portfolio_transaction` RPC.
- * Rebuilds FIFO matches and updates position summaries idempotently.
- */
+/** Record a trade; the server validates the complete dated position history. */
 export async function recordTransaction(params: RecordTransactionParams): Promise<TransactionRecordResult> {
   const client = getSupabaseClient();
   const clientRequestId = params.clientRequestId || generateUUID();
@@ -388,14 +343,16 @@ export async function recordTransaction(params: RecordTransactionParams): Promis
     });
 
     if (error) {
-      log.error('İşlem kaydedilemedi', { params, error: error.message });
+      log.error('portfolio.transaction.rpc.failed', {
+        message: 'Portfolio transaction rpc failed.',
+        error: error
+      });
       throw createPortfolioOperationError('İşlem kaydedilemedi', error);
     }
 
-    log.info('İşlem başarıyla kaydedildi', {
-      transactionId: data?.transaction_id,
-      wasReplayed: data?.was_replayed,
-      currentQuantity: data?.current_quantity,
+    log.info('portfolio.transaction.created', {
+      message: 'Portfolio transaction created.',
+      context: { transactionId: data?.transaction_id, wasReplayed: data?.was_replayed, currentQuantity: data?.current_quantity }
     });
 
     notifyPortfolioChanged();
@@ -404,49 +361,11 @@ export async function recordTransaction(params: RecordTransactionParams): Promis
     if (error instanceof PortfolioOperationError) {
       throw error;
     }
-    log.error('recordTransaction istisnası', { error: String(error) });
+    log.error('portfolio.transaction.failed', {
+      message: 'Portfolio transaction failed.',
+      error: error
+    });
     throw createPortfolioOperationError('İşlem kaydedilemedi', error);
-  }
-}
-
-/**
- * Atomically records a cash flow (DEPOSIT / WITHDRAWAL) via typed `record_cash_flow` RPC.
- */
-export async function recordCashFlow(params: RecordCashFlowParams): Promise<CashFlowRecordResult> {
-  const client = getSupabaseClient();
-  const clientRequestId = params.clientRequestId || generateUUID();
-  const flowAt = params.flowAt || new Date().toISOString();
-
-  try {
-    const { data, error } = await client.rpc('record_cash_flow', {
-      p_portfolio_id: params.portfolioId,
-      p_flow_type: params.flowType,
-      p_amount: params.amount,
-      p_currency: params.currency,
-      p_flow_at: flowAt,
-      p_client_request_id: clientRequestId,
-      p_notes: params.notes || null,
-    });
-
-    if (error) {
-      log.error('Nakit hareketi kaydedilemedi', { params, error: error.message });
-      throw createPortfolioOperationError('Nakit hareketi kaydedilemedi', error);
-    }
-
-    log.info('Nakit hareketi kaydedildi', {
-      cashFlowId: data?.cash_flow_id,
-      balance: data?.cash_balance,
-      currency: data?.currency,
-    });
-
-    notifyPortfolioChanged();
-    return data as CashFlowRecordResult;
-  } catch (error) {
-    if (error instanceof PortfolioOperationError) {
-      throw error;
-    }
-    log.error('recordCashFlow istisnası', { error: String(error) });
-    throw createPortfolioOperationError('Nakit hareketi kaydedilemedi', error);
   }
 }
 
@@ -465,7 +384,10 @@ export async function reverseTransaction(params: ReverseTransactionParams): Prom
     });
 
     if (error) {
-      log.error('İşlem iptal edilemedi', { params, error: error.message });
+      log.error('portfolio.transaction.reverse.rpc.failed', {
+        message: 'Portfolio transaction reverse rpc failed.',
+        error: error
+      });
       throw createPortfolioOperationError('İşlem iptal edilemedi', error);
     }
 
@@ -475,51 +397,15 @@ export async function reverseTransaction(params: ReverseTransactionParams): Prom
     if (error instanceof PortfolioOperationError) {
       throw error;
     }
-    log.error('reverseTransaction istisnası', { error: String(error) });
+    log.error('portfolio.transaction.reverse.failed', {
+      message: 'Portfolio transaction reverse failed.',
+      error: error
+    });
     throw createPortfolioOperationError('İşlem iptal edilemedi', error);
   }
 }
 
-/**
- * Reverses a cash flow via typed `reverse_cash_flow` RPC.
- */
-export async function reverseCashFlow(params: ReverseCashFlowParams): Promise<CashFlowRecordResult> {
-  const client = getSupabaseClient();
-  const clientRequestId = params.clientRequestId || generateUUID();
-
-  try {
-    const { data, error } = await client.rpc('reverse_cash_flow', {
-      p_cash_flow_id: params.cashFlowId,
-      p_client_request_id: clientRequestId,
-      p_reason: params.reason,
-    });
-
-    if (error) {
-      log.error('Nakit akışı iptal edilemedi', { params, error: error.message });
-      throw createPortfolioOperationError('Nakit akışı iptal edilemedi', error);
-    }
-
-    notifyPortfolioChanged();
-    return data as CashFlowRecordResult;
-  } catch (error) {
-    if (error instanceof PortfolioOperationError) {
-      throw error;
-    }
-    log.error('reverseCashFlow istisnası', { error: String(error) });
-    throw createPortfolioOperationError('Nakit akışı iptal edilemedi', error);
-  }
-}
-
-/**
- * Atomically clears the authenticated user's investment transactions, cash flows,
- * FIFO ledger matches, instrument links, and snapshots via typed `reset_my_investments` RPC.
- * Preserves the user's Supabase auth session, portfolio name, and base currency.
- * 
- * Strict contract:
- * - Requires explicit `clientRequestId`.
- * - Fixed confirmation string 'RESET_ALL_INVESTMENTS'.
- * - Does NOT use unsafe direct table deletion fallback.
- */
+/** Reset investment records without changing the authenticated account. */
 export async function resetMyInvestments(params: ResetInvestmentsParams): Promise<ResetInvestmentsResult> {
   if (!params || !params.clientRequestId || typeof params.clientRequestId !== 'string' || params.clientRequestId.trim() === '') {
     throw new PortfolioOperationError('Yatırımları sıfırlamak için geçerli bir clientRequestId zorunludur.');
@@ -530,8 +416,9 @@ export async function resetMyInvestments(params: ResetInvestmentsParams): Promis
   const confirmation = 'RESET_ALL_INVESTMENTS';
 
   try {
-    log.info('Kullanıcı yatırımları sıfırlanıyor (reset_my_investments RPC)...', {
-      clientRequestId,
+    log.info('portfolio.reset.started', {
+      message: 'Portfolio reset started.',
+      context: { clientRequestId }
     });
 
     const { data, error } = await client.rpc('reset_my_investments', {
@@ -540,15 +427,16 @@ export async function resetMyInvestments(params: ResetInvestmentsParams): Promis
     });
 
     if (error) {
-      log.error('reset_my_investments RPC hatası', { error: error.message });
+      log.error('portfolio.reset.rpc.failed', {
+        message: 'Portfolio reset rpc failed.',
+        error: error
+      });
       throw createPortfolioOperationError('Yatırımlar sıfırlanamadı', error);
     }
 
-    log.info('Yatırımlar başarıyla sıfırlandı', {
-      wasReplayed: data?.was_replayed,
-      deletedTransactions: data?.deleted_transaction_count,
-      deletedCashFlows: data?.deleted_cash_flow_count,
-      deletedSnapshots: data?.deleted_snapshot_count,
+    log.info('portfolio.reset.completed', {
+      message: 'Portfolio reset completed.',
+      context: { wasReplayed: data?.was_replayed, deletedTransactions: data?.deleted_transaction_count, deletedSnapshots: data?.deleted_snapshot_count }
     });
 
     notifyPortfolioChanged();
@@ -557,26 +445,10 @@ export async function resetMyInvestments(params: ResetInvestmentsParams): Promis
     if (error instanceof PortfolioOperationError) {
       throw error;
     }
-    log.error('resetMyInvestments istisnası', { error: String(error) });
+    log.error('portfolio.reset.failed', {
+      message: 'Portfolio reset failed.',
+      error: error
+    });
     throw createPortfolioOperationError('Yatırımlar sıfırlanamadı', error);
-  }
-}
-
-/**
- * Archives all active portfolios for the given user ID to cleanly reset portfolio history.
- */
-export async function archiveAllUserPortfolios(userId: string): Promise<void> {
-  const client = getSupabaseClient();
-  try {
-    log.info('Kullanıcının portföyleri arşivleniyor...', { userId });
-    await client
-      .from('portfolios')
-      .update({ archived_at: new Date().toISOString() })
-      .eq('user_id', userId)
-      .is('archived_at', null);
-    notifyPortfolioChanged();
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.warn('Portföyler arşivlenirken uyarı alındı', { error: msg });
   }
 }

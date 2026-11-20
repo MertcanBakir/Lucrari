@@ -154,7 +154,7 @@ export function formatActivityUnitPrice(
 }
 
 /**
- * Formats total gross transaction or cash flow amount.
+ * Formats total gross transaction amount.
  */
 export function formatActivityGrossAmount(
   amount: number | null | undefined,
@@ -170,7 +170,7 @@ export interface ActivityTypeMeta {
   label: string;
   shortLabel: string;
   icon: IconSymbolName;
-  variant: 'buy' | 'sell' | 'deposit' | 'withdrawal';
+  variant: 'buy' | 'sell';
   sign: '+' | '-' | '';
 }
 
@@ -195,22 +195,7 @@ export function getActivityTypeMeta(type: ActivityType): ActivityTypeMeta {
         variant: 'sell',
         sign: '-',
       };
-    case 'DEPOSIT':
-      return {
-        label: 'Para Yatırma',
-        shortLabel: 'Yatırma',
-        icon: 'arrow.down.right',
-        variant: 'deposit',
-        sign: '+',
-      };
-    case 'WITHDRAWAL':
-      return {
-        label: 'Para Çekme',
-        shortLabel: 'Çekme',
-        icon: 'arrow.up.right',
-        variant: 'withdrawal',
-        sign: '-',
-      };
+
   }
 }
 

@@ -125,3 +125,14 @@ it('redacts tokens and credentials from strings and structured errors', () => {
   expect(sanitizeAuthError(new Error())).toBe('Kimlik doğrulama hatası oluştu.');
   expect(sanitizeAuthError(null)).toBe('Bilinmeyen kimlik doğrulama hatası');
 });
+
+it('does not create a replacement guest when session lookup throws', async () => {
+  auth.getSession.mockRejectedValueOnce(new Error('Session storage temporarily unavailable'));
+  await expect(ensureAnonymousSession()).resolves.toMatchObject({
+    user: null, session: null, isNewUser: false, error: 'Session storage temporarily unavailable',
+  });
+  expect(auth.signInAnonymously).not.toHaveBeenCalled();
+  // A later retry can recover the original identity.
+  await expect(ensureAnonymousSession()).resolves.toMatchObject({ user, isNewUser: false, error: null });
+  expect(auth.signInAnonymously).not.toHaveBeenCalled();
+});

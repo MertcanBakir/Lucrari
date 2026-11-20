@@ -167,3 +167,11 @@ describe('Financial Number Parser & Validator', () => {
     });
   });
 });
+
+it('preserves tiny trade totals and rejects arithmetic overflow', () => {
+  const tiny = calculateTradeTotal('0,000001', '0,000001');
+  expect(tiny.isValid).toBe(true);
+  expect(tiny.total).toBeCloseTo(1e-12, 16);
+  const huge = '9'.repeat(200);
+  expect(calculateTradeTotal(huge, huge).isValid).toBe(false);
+});

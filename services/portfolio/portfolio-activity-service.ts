@@ -3,7 +3,7 @@
  * 
  * Production service layer for querying historical portfolio activity with:
  * - Keyset 4-part cursor pagination (`occurred_at`, `created_at`, `source_kind`, `activity_id`).
- * - Fail-closed normalization for TRANSACTION vs CASH_FLOW records.
+ * - Fail-closed normalization for transaction records.
  * - In-flight query deduplication with composite cache keys (including limit).
  * - Reactive global portfolio mutation listener (`subscribePortfolioChanges`).
  * - Monotonic portfolio revision tracking and bounded race retry loop (`MAX_ACTIVITY_FETCH_ATTEMPTS = 3`).
@@ -75,7 +75,9 @@ export function clearPortfolioActivityCache(): void {
   inFlightActivityRequests.clear();
   activityRevisionByPortfolioId.clear();
   globalPortfolioActivityRevision = 0;
-  log.debug('Tüm portföy hareketleri önbelleği temizlendi');
+  log.debug('portfolio.activity.cache.cleared', {
+    message: 'Portfolio activity cache cleared.'
+  });
 }
 
 /**
@@ -88,12 +90,17 @@ export function invalidatePortfolioActivityCache(portfolioId: string): void {
       activityCacheByKey.delete(key);
     }
   }
-  log.debug('Portföy hareketleri önbelleği geçersiz kılındı', { portfolioId });
+  log.debug('portfolio.activity.cache.invalidated', {
+    message: 'Portfolio activity cache invalidated.',
+    context: { portfolioId }
+  });
 }
 
 // Auto-subscribe to global portfolio mutations to invalidate activity caches
 subscribePortfolioChanges(() => {
-  log.info('Portföy mutasyon bildirimi alındı, hareketler önbelleği geçersiz kılındı');
+  log.debug('portfolio.activity.mutation.received', {
+    message: 'Portfolio activity mutation received.'
+  });
   globalPortfolioActivityRevision++;
   activityCacheByKey.clear();
 });
@@ -218,21 +225,13 @@ export function normalizePortfolioActivityRow(row: unknown): PortfolioActivityIt
 
   // 2. Enum validations
   const sourceKind = raw.source_kind as ActivitySourceKind;
-  if (sourceKind !== 'TRANSACTION' && sourceKind !== 'CASH_FLOW') {
+  if (sourceKind !== 'TRANSACTION') {
     throw createPortfolioOperationError('Geçersiz hareket kaynak türü (source_kind).');
   }
 
   const activityType = raw.activity_type as ActivityType;
-  if (!['BUY', 'SELL', 'DEPOSIT', 'WITHDRAWAL'].includes(activityType)) {
+  if (!['BUY', 'SELL'].includes(activityType)) {
     throw createPortfolioOperationError('Geçersiz hareket işlem türü (activity_type).');
-  }
-
-  // Consistency check: Transaction must be BUY/SELL, CashFlow must be DEPOSIT/WITHDRAWAL
-  if (sourceKind === 'TRANSACTION' && !['BUY', 'SELL'].includes(activityType)) {
-    throw createPortfolioOperationError('İşlem türü ve kaynak türü uyuşmazlığı tespit edildi.');
-  }
-  if (sourceKind === 'CASH_FLOW' && !['DEPOSIT', 'WITHDRAWAL'].includes(activityType)) {
-    throw createPortfolioOperationError('Nakit türü ve kaynak türü uyuşmazlığı tespit edildi.');
   }
 
   // 3. Timestamp validations (Must be valid ISO-8601 with timezone offset)
@@ -293,49 +292,35 @@ export function normalizePortfolioActivityRow(row: unknown): PortfolioActivityIt
   let quantity: number | null = null;
   let unitPrice: number | null = null;
 
-  if (sourceKind === 'TRANSACTION') {
-    if (!isValidUUID(raw.instrument_id)) {
-      throw createPortfolioOperationError('İşlem kaydında geçerli instrument_id zorunludur.');
-    }
-    instrumentId = (raw.instrument_id as string).trim();
-
-    if (typeof raw.symbol !== 'string' || !raw.symbol.trim()) {
-      throw createPortfolioOperationError('İşlem kaydında sembol zorunludur.');
-    }
-    symbol = raw.symbol.trim();
-
-    if (typeof raw.company_name !== 'string' || !raw.company_name.trim()) {
-      throw createPortfolioOperationError('İşlem kaydında şirket adı zorunludur.');
-    }
-    companyName = raw.company_name.trim();
-
-    if (typeof raw.market !== 'string' || !VALID_MARKETS.has(raw.market as MarketType)) {
-      throw createPortfolioOperationError('İşlem kaydında geçerli piyasa (market) zorunludur.');
-    }
-    market = raw.market as MarketType;
-
-    if (typeof raw.quantity !== 'number' || !Number.isFinite(raw.quantity) || raw.quantity <= 0) {
-      throw createPortfolioOperationError('İşlem kaydında pozitif adet (quantity) zorunludur.');
-    }
-    quantity = raw.quantity;
-
-    if (typeof raw.unit_price !== 'number' || !Number.isFinite(raw.unit_price) || raw.unit_price <= 0) {
-      throw createPortfolioOperationError('İşlem kaydında pozitif birim fiyat (unit_price) zorunludur.');
-    }
-    unitPrice = raw.unit_price;
-  } else {
-    // For CASH_FLOW, instrument fields MUST BE STRICTLY NULL or UNDEFINED (Fail-Closed contract)
-    if (
-      (raw.instrument_id !== null && raw.instrument_id !== undefined) ||
-      (raw.symbol !== null && raw.symbol !== undefined) ||
-      (raw.company_name !== null && raw.company_name !== undefined) ||
-      (raw.market !== null && raw.market !== undefined) ||
-      (raw.quantity !== null && raw.quantity !== undefined) ||
-      (raw.unit_price !== null && raw.unit_price !== undefined)
-    ) {
-      throw createPortfolioOperationError('Nakit akışı satırında enstrüman alanları dolu olamaz.');
-    }
+  if (!isValidUUID(raw.instrument_id)) {
+    throw createPortfolioOperationError('İşlem kaydında geçerli instrument_id zorunludur.');
   }
+  instrumentId = (raw.instrument_id as string).trim();
+
+  if (typeof raw.symbol !== 'string' || !raw.symbol.trim()) {
+    throw createPortfolioOperationError('İşlem kaydında sembol zorunludur.');
+  }
+  symbol = raw.symbol.trim();
+
+  if (typeof raw.company_name !== 'string' || !raw.company_name.trim()) {
+    throw createPortfolioOperationError('İşlem kaydında şirket adı zorunludur.');
+  }
+  companyName = raw.company_name.trim();
+
+  if (typeof raw.market !== 'string' || !VALID_MARKETS.has(raw.market as MarketType)) {
+    throw createPortfolioOperationError('İşlem kaydında geçerli piyasa (market) zorunludur.');
+  }
+  market = raw.market as MarketType;
+
+  if (typeof raw.quantity !== 'number' || !Number.isFinite(raw.quantity) || raw.quantity <= 0) {
+    throw createPortfolioOperationError('İşlem kaydında pozitif adet (quantity) zorunludur.');
+  }
+  quantity = raw.quantity;
+
+  if (typeof raw.unit_price !== 'number' || !Number.isFinite(raw.unit_price) || raw.unit_price <= 0) {
+    throw createPortfolioOperationError('İşlem kaydında pozitif birim fiyat (unit_price) zorunludur.');
+  }
+  unitPrice = raw.unit_price;
 
   let notes: string | null = null;
   if (raw.notes !== null && raw.notes !== undefined) {
@@ -383,9 +368,6 @@ function isStrictlySortedDescending(a: PortfolioActivityItem, b: PortfolioActivi
   const createB = new Date(b.createdAt).getTime();
   if (createA !== createB) return createA > createB;
 
-  if (a.sourceKind !== b.sourceKind) {
-    return a.sourceKind.localeCompare(b.sourceKind) > 0;
-  }
 
   return a.activityId.localeCompare(b.activityId) >= 0;
 }
@@ -533,7 +515,10 @@ export async function fetchPortfolioActivityPage(
     if (cached) {
       const isExpired = Date.now() - cached.timestamp > ACTIVITY_CACHE_TTL_MS;
       if (!isExpired || cached.isStale) {
-        log.debug('Önbellekten hareketler döndürülüyor', { cacheKey, isStale: cached.isStale });
+        log.debug('portfolio.activity.cache.hit', {
+          message: 'Portfolio activity cache hit.',
+          context: { portfolioId, isStale: cached.isStale }
+        });
         return cached;
       }
     }
@@ -542,7 +527,10 @@ export async function fetchPortfolioActivityPage(
   // 2. In-flight request deduplication
   const existingInFlight = inFlightActivityRequests.get(cacheKey);
   if (existingInFlight) {
-    log.debug('Devam eden istek bekleniyor', { cacheKey });
+    log.debug('portfolio.activity.request.deduplicated', {
+      message: 'Portfolio activity request deduplicated.',
+      context: { portfolioId }
+    });
     return existingInFlight;
   }
 
@@ -560,13 +548,9 @@ export async function fetchPortfolioActivityPage(
       try {
         const client = getSupabaseClient();
 
-        log.debug('RPC get_my_portfolio_activity çağrılıyor', {
-          attempt,
-          portfolioId,
-          limit,
-          filter,
-          search: sanitizedSearch,
-          cursor,
+        log.debug('portfolio.activity.request.started', {
+          message: 'Portfolio activity request started.',
+          context: { attempt, portfolioId, limit, filter, hasSearch: Boolean(sanitizedSearch), hasCursor: Boolean(cursor) }
         });
 
         const response = await client.rpc('get_my_portfolio_activity', {
@@ -584,11 +568,18 @@ export async function fetchPortfolioActivityPage(
         rpcError = response.error;
       } catch (networkErr) {
         // Transport/fetch error at network layer -> do NOT loop 3 times
-        log.warn('Ağ seviyesinde hata oluştu', { attempt, error: String(networkErr) });
+        log.warn('portfolio.activity.network.failed', {
+          message: 'Portfolio activity network failed.',
+          context: { attempt },
+          error: networkErr
+        });
 
         const cached = activityCacheByKey.get(cacheKey);
         if (cached) {
-          log.info('Ağ hatası sonrası mevcut cache stale olarak kaydediliyor', { cacheKey });
+          log.debug('portfolio.activity.cache.stale', {
+            message: 'Portfolio activity cache stale.',
+            context: { portfolioId }
+          });
           const updatedStale: PortfolioActivityPageResult = {
             ...cached,
             isStale: true,
@@ -606,13 +597,20 @@ export async function fetchPortfolioActivityPage(
 
       // Check PostgreSQL / domain RPC error
       if (rpcError) {
-        log.warn('RPC get_my_portfolio_activity hatası', { error: rpcError, attempt });
+        log.warn('portfolio.activity.rpc.failed', {
+          message: 'Portfolio activity rpc failed.',
+          context: { attempt },
+          error: rpcError
+        });
 
         // Transport error check for Supabase client error response
         if (isRetryablePortfolioTransportError(rpcError)) {
           const cached = activityCacheByKey.get(cacheKey);
           if (cached) {
-            log.info('Taşıma hatası sonrası mevcut cache stale olarak kaydediliyor', { cacheKey });
+            log.debug('portfolio.activity.cache.fallback', {
+              message: 'Portfolio activity cache fallback.',
+              context: { portfolioId }
+            });
             const updatedStale: PortfolioActivityPageResult = {
               ...cached,
               isStale: true,
@@ -633,11 +631,9 @@ export async function fetchPortfolioActivityPage(
       // Check revision change during this fetch attempt
       const endRevision = getPortfolioActivityRevision(portfolioId);
       if (startRevision !== endRevision) {
-        log.info('Hareket sorgusu sırasında mutasyon gerçekleşti (revision mismatch)', {
-          portfolioId,
-          attempt,
-          startRevision,
-          endRevision,
+        log.debug('portfolio.activity.revision.retry', {
+          message: 'Portfolio activity revision retry.',
+          context: { portfolioId, attempt, startRevision, endRevision }
         });
 
         if (attempt < MAX_ACTIVITY_FETCH_ATTEMPTS) {
@@ -647,7 +643,10 @@ export async function fetchPortfolioActivityPage(
         // Exhausted max revision attempts (Revision storm)
         const cached = activityCacheByKey.get(cacheKey);
         if (cached) {
-          log.info('Revision fırtınası sonrası mevcut cache stale olarak kaydediliyor', { cacheKey });
+          log.info('portfolio.activity.revision.exhausted', {
+            message: 'Portfolio activity revision exhausted.',
+            context: { portfolioId }
+          });
           const updatedStale: PortfolioActivityPageResult = {
             ...cached,
             isStale: true,

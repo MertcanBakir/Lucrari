@@ -12,8 +12,8 @@ jest.mock('@/context/auth-context', () => ({ useAuth: jest.fn() }));
 jest.mock('@/services/auth/auth-service', () => ({ ensureAnonymousSession: jest.fn() }));
 jest.mock('@/services/portfolio/portfolio-service', () => ({
   ensureDefaultPortfolio: jest.fn(), fetchPortfolioDataCombined: jest.fn(), subscribePortfolioChanges: jest.fn(),
-  initializePortfolioCashAccounts: jest.fn(), recordTransaction: jest.fn(), recordCashFlow: jest.fn(),
-  reverseTransaction: jest.fn(), reverseCashFlow: jest.fn(), resetMyInvestments: jest.fn(),
+  setPortfolioCash: jest.fn(), recordTransaction: jest.fn(),
+  reverseTransaction: jest.fn(), resetMyInvestments: jest.fn(),
 }));
 jest.mock('@/services/portfolio/portfolio-activity-service', () => ({
   PORTFOLIO_ACTIVITY_PAGE_SIZE: 20, fetchPortfolioActivityPage: jest.fn(),
@@ -23,9 +23,7 @@ const portfolio = jest.mocked(portfolioService);
 const fetchActivity = jest.mocked(fetchPortfolioActivityPage);
 const makePortfolio = (id: string) => ({ id, name: id } as Awaited<ReturnType<typeof portfolio.ensureDefaultPortfolio>>);
 const combined = {
-  positions: [position], cashState: { portfolioId: 'portfolio-a', isInitialized: true,
-    balances: [{ currency: 'TRY', currentBalance: 150, openingBalance: 150, initializedAt: date },
-      { currency: 'USD', currentBalance: 0, openingBalance: 0, initializedAt: date }] },
+  positions: [position], cash: { tryBalance: 150, usdBalance: 0 }, realizedPnl: { tryPnl: 0, usdPnl: 0 },
   fxRateInfo: { rate: 30, isAvailable: true, isStale: false, rateAt: date },
 } as Awaited<ReturnType<typeof portfolio.fetchPortfolioDataCombined>>;
 const cursor = { beforeOccurredAt: date, beforeCreatedAt: date, beforeSourceKind: 'TRANSACTION', beforeActivityId: activity.activityId } as const;
@@ -50,28 +48,22 @@ afterEach(() => jest.useRealTimers());
 it('delegates portfolio writes with the current ID and refreshes on portfolio mutations', async () => {
   const hook = renderHook(() => usePortfolio());
   await waitFor(() => expect(hook.result.current.positions).toEqual([position]));
-  expect(hook.result.current.availableCashTry).toBe(150);
+  expect(hook.result.current.cash?.tryBalance).toBe(150);
   expect(hook.result.current.usdTryRate).toBe(30);
   const order = { instrumentId: position.instrument_id, transactionType: 'BUY', quantity: 1, unitPrice: 100, currency: 'TRY' } as const;
-  const flow = { flowType: 'DEPOSIT', amount: 15, currency: 'TRY' } as const;
   await act(async () => {
-    await hook.result.current.initializeCashAccounts(150, 0, 'setup-intent');
+    await hook.result.current.updateCash(150, 0);
     await hook.result.current.addTransaction(order);
-    await hook.result.current.addCashFlow(flow);
   });
-  expect(portfolio.initializePortfolioCashAccounts).toHaveBeenCalledWith(expect.objectContaining({ portfolioId: 'portfolio-a', clientRequestId: 'setup-intent' }));
+  expect(portfolio.setPortfolioCash).toHaveBeenCalledWith({ portfolioId: 'portfolio-a', tryBalance: 150, usdBalance: 0 });
   expect(portfolio.recordTransaction).toHaveBeenCalledWith({ ...order, portfolioId: 'portfolio-a' });
-  expect(portfolio.recordCashFlow).toHaveBeenCalledWith({ ...flow, portfolioId: 'portfolio-a' });
   const reverseTrade = { transactionId: 'transaction-a', reason: 'Duplicate', clientRequestId: 'reverse-trade' };
-  const reverseFlow = { cashFlowId: 'cash-a', reason: 'Duplicate', clientRequestId: 'reverse-cash' };
   const reset = { clientRequestId: 'reset-a' };
   await act(async () => {
     await hook.result.current.reverseTransaction(reverseTrade);
-    await hook.result.current.reverseCashFlow(reverseFlow);
     await hook.result.current.resetInvestments(reset);
   });
   expect(portfolio.reverseTransaction).toHaveBeenCalledWith(reverseTrade);
-  expect(portfolio.reverseCashFlow).toHaveBeenCalledWith(reverseFlow);
   expect(portfolio.resetMyInvestments).toHaveBeenCalledWith(reset);
   const publish = portfolio.subscribePortfolioChanges.mock.calls[0][0];
   await act(async () => publish());
@@ -102,8 +94,7 @@ it('does not allow portfolio mutations before a valid portfolio is resolved', as
   setUser(null);
   const hook = renderHook(() => usePortfolio());
   await waitFor(() => expect(hook.result.current.error).toMatch(/oturumu doğrulanamadı/));
-  await expect(hook.result.current.initializeCashAccounts(0, 0)).rejects.toThrow('Aktif portföy');
-  await expect(hook.result.current.addCashFlow({ flowType: 'DEPOSIT', amount: 1, currency: 'TRY' })).rejects.toThrow('Aktif portföy');
+  await expect(hook.result.current.updateCash(0, 0)).rejects.toThrow('Aktif portföy');
   await expect(hook.result.current.addTransaction({ instrumentId: position.instrument_id, transactionType: 'BUY',
     quantity: 1, unitPrice: 1, currency: 'TRY' })).rejects.toThrow('Aktif portföy');
 });
@@ -177,4 +168,24 @@ it('does not fetch combined data when a portfolio lookup resolves after unmount'
   hook.unmount();
   await act(async () => request.resolve(makePortfolio('unmounted')));
   expect(portfolio.fetchPortfolioDataCombined).not.toHaveBeenCalled();
+});
+
+it('reloads positions and valuation after a successful trade notification', async () => {
+  const hook = renderHook(() => usePortfolio());
+  await waitFor(() => expect(hook.result.current.positions).toEqual([position]));
+  const updated = { ...position, quantity: 10, remaining_cost_basis: 920, average_cost: 92, market_value: 1000, unrealized_pnl: 80 };
+  portfolio.fetchPortfolioDataCombined.mockResolvedValue({ ...combined, positions: [updated] });
+  portfolio.recordTransaction.mockImplementationOnce(async () => {
+    const publish = portfolio.subscribePortfolioChanges.mock.calls[0][0];
+    publish();
+    return { transaction_id: 'trade-a', was_replayed: false, current_quantity: '10', remaining_cost_basis: '920', realized_pnl: '0' };
+  });
+  await act(async () => {
+    await hook.result.current.addTransaction({ instrumentId: position.instrument_id, transactionType: 'BUY', quantity: 2,
+      unitPrice: 100, currency: 'TRY', clientRequestId: 'trade-request' });
+  });
+  await waitFor(() => expect(hook.result.current.positions[0].quantity).toBe(10));
+  expect(hook.result.current.stats.positionsMarketValueTry).toBe(1000);
+  expect(hook.result.current.stats.totalCostTry).toBe(920);
+  expect(portfolio.recordTransaction).toHaveBeenCalledWith(expect.objectContaining({ portfolioId: 'portfolio-a', quantity: 2, clientRequestId: 'trade-request' }));
 });

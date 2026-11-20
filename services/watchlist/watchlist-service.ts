@@ -7,7 +7,7 @@
  * 
  * STRICT COMPLIANCE:
  * - NO direct queries to `user_watchlist_items` or `earnings_events`.
- * - NO portfolio transaction/cash/FIFO RPCs.
+ * - NO portfolio mutation RPCs.
  * - Strongly typed Supabase RPC calls through Database interface (NO `(client as any).rpc`).
  * - NO fake prices, fallback prices (like 100), or mock instruments.
  */

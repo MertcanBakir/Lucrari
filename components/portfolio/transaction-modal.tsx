@@ -1,12 +1,4 @@
-/**
- * Lucrari — Unified Transaction & Cash Flow Modal
- * 
- * Supports:
- * - BUY: Global catalog search (BIST100, NASDAQ, Crypto, TEFAS), fail-closed cash verification.
- * - SELL: Filtered directly to owned portfolio positions with quick percentage buttons and position quantity guards.
- * - DEPOSIT / WITHDRAWAL: Isolated TRY/USD cash flow movements with non-negative cash guards.
- * - Guaranteed Reanimated FadeInDown / FadeOutDown spring transitions on every tab switch with balanced modal height.
- */
+/** Original trade layout, using the simplified portfolio model. */
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
@@ -33,10 +25,10 @@ import * as Haptics from 'expo-haptics';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { formatCurrency, formatAvailableCash } from '@/utils/financial-formatters';
+import { formatCurrency } from '@/utils/financial-formatters';
 import { parseFinancialNumber, calculateTradeTotal } from '@/utils/financial-parser';
-import { evaluateCashMutation } from '@/utils/portfolio-guard';
 import { formatPortfolioRpcError } from '@/utils/portfolio-errors';
+import { formatTradePrice } from '@/utils/portfolio-trade';
 import { generateUUID } from '@/utils/uuid';
 import { getOrCreateMutationIntent, type MutationIntent } from '@/utils/mutation-intent';
 import {
@@ -44,18 +36,14 @@ import {
   type InstrumentWithPrice,
 } from '@/services/portfolio/instrument-service';
 import { MARKET_TABS } from './market-filter-chips';
-import type { ExtendedMarketType, TransactionType, CashFlowType, PortfolioPosition } from '@/types/database';
+import type { ExtendedMarketType, TransactionType, PortfolioPosition } from '@/types/database';
 
-export type TxModeType = 'BUY' | 'SELL' | 'DEPOSIT' | 'WITHDRAWAL';
+export type TxModeType = TransactionType;
 
 export interface TransactionModalProps {
   visible: boolean;
   initialType?: TxModeType;
   positions?: PortfolioPosition[];
-  availableCashTry?: number | null;
-  availableCashUsd?: number | null;
-  isCashInitialized: boolean;
-  onOpenCashSetup?: () => void;
   onClose: () => void;
   onSubmitTransaction: (params: {
     instrumentId: string;
@@ -67,14 +55,7 @@ export interface TransactionModalProps {
     clientRequestId?: string;
     notes?: string | null;
   }) => Promise<void>;
-  onSubmitCashFlow: (params: {
-    flowType: CashFlowType;
-    amount: number;
-    currency: 'TRY' | 'USD';
-    flowAt?: string;
-    clientRequestId?: string;
-    notes?: string | null;
-  }) => Promise<void>;
+
 }
 
 interface OwnedInstrumentWithPrice extends InstrumentWithPrice {
@@ -92,13 +73,8 @@ export function TransactionModal({
   visible,
   initialType = 'BUY',
   positions = [],
-  availableCashTry,
-  availableCashUsd,
-  isCashInitialized,
-  onOpenCashSetup,
   onClose,
   onSubmitTransaction,
-  onSubmitCashFlow,
 }: TransactionModalProps) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
@@ -117,7 +93,6 @@ export function TransactionModal({
 
   const [quantityInput, setQuantityInput] = useState<string>('100');
   const [priceInput, setPriceInput] = useState<string>('');
-  const [cashFlowCurrency, setCashFlowCurrency] = useState<'TRY' | 'USD'>('TRY');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -125,6 +100,7 @@ export function TransactionModal({
 
   // Intent tracking for network retry idempotency
   const intentRef = useRef<MutationIntent | null>(null);
+  const submissionPendingRef = useRef(false);
 
   // Map owned positions to InstrumentWithPrice format
   const ownedInstruments: OwnedInstrumentWithPrice[] = useMemo(() => {
@@ -193,7 +169,7 @@ export function TransactionModal({
         if (ownedInstruments.length > 0) {
           const first = ownedInstruments[0];
           setSelectedInstrument(first);
-          setPriceInput(first.hasPrice && first.price !== null ? first.price.toFixed(2) : '');
+          setPriceInput(first.hasPrice && first.price !== null ? formatTradePrice(first.price, first.market) : '');
           setQuantityInput(String(first.ownedQuantity));
         } else {
           setSelectedInstrument(null);
@@ -202,9 +178,6 @@ export function TransactionModal({
         }
       } else if (initialType === 'BUY') {
         setQuantityInput('100');
-      } else {
-        setQuantityInput('1000');
-        setCashFlowCurrency('TRY');
       }
     }
   }, [visible, initialType, ownedInstruments]);
@@ -241,7 +214,7 @@ export function TransactionModal({
         setSelectedInstrument((prev) => {
           if (prev && result.items.some((r) => r.id === prev.id)) return prev;
           const first = result.items[0];
-          setPriceInput(first.hasPrice && first.price !== null ? first.price.toFixed(2) : '');
+          setPriceInput(first.hasPrice && first.price !== null ? formatTradePrice(first.price, first.market) : '');
           return first;
         });
       } else {
@@ -316,7 +289,7 @@ export function TransactionModal({
       if (ownedInstruments.length > 0) {
         const first = ownedInstruments[0];
         setSelectedInstrument(first);
-        setPriceInput(first.hasPrice && first.price !== null ? first.price.toFixed(2) : '');
+        setPriceInput(first.hasPrice && first.price !== null ? formatTradePrice(first.price, first.market) : '');
         setQuantityInput(String(first.ownedQuantity));
       } else {
         setSelectedInstrument(null);
@@ -326,9 +299,6 @@ export function TransactionModal({
     } else if (type === 'BUY') {
       setQuantityInput('100');
       loadCatalog(txCategory, '');
-    } else {
-      setQuantityInput('1000');
-      setPriceInput('');
     }
   };
 
@@ -352,7 +322,7 @@ export function TransactionModal({
       }
     }
     setSelectedInstrument(inst);
-    setPriceInput(inst.hasPrice && inst.price !== null ? inst.price.toFixed(2) : '');
+    setPriceInput(inst.hasPrice && inst.price !== null ? formatTradePrice(inst.price, inst.market) : '');
     
     if (txType === 'SELL') {
       const owned = ownedInstruments.find((o) => o.id === inst.id);
@@ -372,92 +342,21 @@ export function TransactionModal({
       }
     }
     if (maxOwnedQuantity <= 0) return;
-    const computedQty = pct === 100 ? maxOwnedQuantity : Math.round((maxOwnedQuantity * pct) / 100);
+    const computedQty = pct === 100 ? maxOwnedQuantity : Number(((maxOwnedQuantity * pct) / 100).toFixed(12));
     setQuantityInput(String(computedQty));
     intentRef.current = null;
   };
 
   const tradeCalc = calculateTradeTotal(quantityInput, priceInput);
-  const cashAmountParsed = parseFinancialNumber(quantityInput, { allowZero: false, allowNegative: false });
-
-  const selectedCurrency: 'TRY' | 'USD' = selectedInstrument?.currency ?? 'TRY';
-  const availableCashForBuy = selectedCurrency === 'TRY' ? availableCashTry : availableCashUsd;
-  const availableCashForFlow = cashFlowCurrency === 'TRY' ? availableCashTry : availableCashUsd;
-
-  const currentAmountOrTotal =
-    txType === 'BUY'
-      ? tradeCalc.total
-      : txType === 'WITHDRAWAL'
-      ? cashAmountParsed.value
-      : null;
-
-  const currentAvailableCash =
-    txType === 'BUY' ? availableCashForBuy : availableCashForFlow;
-
-  const mutationGuard = evaluateCashMutation({
-    action: txType,
-    isCashInitialized,
-    amountOrTotal: currentAmountOrTotal,
-    availableCash: currentAvailableCash,
-  });
-
-  const isCashBlocked = mutationGuard.isBlocked;
-  const isInsufficientCashForBuy = txType === 'BUY' && mutationGuard.reason === 'INSUFFICIENT_CASH';
-  const isInsufficientCashForWithdrawal = txType === 'WITHDRAWAL' && mutationGuard.reason === 'INSUFFICIENT_CASH';
-  const isBalanceUnavailableForBuy = txType === 'BUY' && isCashInitialized && mutationGuard.reason === 'BALANCE_UNAVAILABLE';
-  const isBalanceUnavailableForWithdrawal = txType === 'WITHDRAWAL' && isCashInitialized && mutationGuard.reason === 'BALANCE_UNAVAILABLE';
-
   // Position sufficiency validation for SELL
   const isInsufficientPositionForSell =
     txType === 'SELL' &&
     (maxOwnedQuantity <= 0 || (tradeCalc.quantity !== null && tradeCalc.quantity > maxOwnedQuantity));
 
-  const availableCashForBuyInfo = formatAvailableCash(availableCashForBuy, selectedCurrency);
-  const availableCashForFlowInfo = formatAvailableCash(availableCashForFlow, cashFlowCurrency);
-
-  // Current serialized payload key to detect form input changes
-  const currentPayloadKey =
-    txType === 'BUY' || txType === 'SELL'
-      ? `${txType}:${selectedInstrument?.id}:${quantityInput}:${priceInput}:${selectedCurrency}`
-      : `${txType}:${quantityInput}:${cashFlowCurrency}`;
+  const currentPayloadKey = `${txType}:${selectedInstrument?.id}:${quantityInput}:${priceInput}:${selectedInstrument?.currency}`;
 
   const handleExecute = async () => {
-    if (mutationGuard.isBlocked) {
-      if (mutationGuard.reason === 'UNINITIALIZED') {
-        Alert.alert(
-          'Nakit Hesabı Gerekli',
-          'İşlem yapabilmek için önce nakit bakiyenizi kurmanız gerekmektedir.',
-          [
-            { text: 'İptal', style: 'cancel' },
-            { text: 'Nakit Bakiyesini Kur', onPress: () => onOpenCashSetup?.() },
-          ]
-        );
-        return;
-      }
-      if (mutationGuard.reason === 'INSUFFICIENT_CASH') {
-        const curr = txType === 'BUY' ? selectedCurrency : cashFlowCurrency;
-        const formattedAvail = txType === 'BUY' ? availableCashForBuyInfo.formatted : availableCashForFlowInfo.formatted;
-        Alert.alert(
-          'Yetersiz Nakit',
-          `Kullanılabilir ${curr} bakiyeniz (${formattedAvail}) bu işlem için yetersizdir.`
-        );
-        return;
-      }
-      if (mutationGuard.reason === 'BALANCE_UNAVAILABLE') {
-        Alert.alert(
-          'Nakit Bakiyesi Doğrulanamadı',
-          'Güncel nakit bakiyesi doğrulanamadı. Lütfen portföyü yenileyip tekrar deneyiniz.'
-        );
-        return;
-      }
-      if (mutationGuard.reason === 'INVALID_AMOUNT') {
-        Alert.alert(
-          'Geçersiz Tutar',
-          'İşlem tutarı doğrulanamadı. Lütfen geçerli bir miktar ve fiyat giriniz.'
-        );
-        return;
-      }
-    }
+    if (submissionPendingRef.current) return;
 
     if (txType === 'BUY' || txType === 'SELL') {
       if (!selectedInstrument) {
@@ -494,6 +393,7 @@ export function TransactionModal({
         return;
       }
 
+      submissionPendingRef.current = true;
       // Maintain intent for retries; generate new intent if payload changed
       const intent = getOrCreateMutationIntent(intentRef.current, currentPayloadKey, generateUUID);
       intentRef.current = intent;
@@ -514,48 +414,14 @@ export function TransactionModal({
       } catch (err) {
         Alert.alert('İşlem Başarısız', formatPortfolioRpcError(err));
       } finally {
-        setIsSubmitting(false);
-      }
-    } else {
-      // DEPOSIT / WITHDRAWAL
-      if (!cashAmountParsed.isValid || cashAmountParsed.value === null) {
-        Alert.alert('Geçersiz Tutar', cashAmountParsed.errorMessage || 'Lütfen geçerli bir tutar giriniz.');
-        return;
-      }
-
-      // Maintain intent for retries; generate new intent if payload changed
-      const intent = getOrCreateMutationIntent(intentRef.current, currentPayloadKey, generateUUID);
-      intentRef.current = intent;
-
-      setIsSubmitting(true);
-      try {
-        await onSubmitCashFlow({
-          flowType: txType,
-          amount: cashAmountParsed.value,
-          currency: cashFlowCurrency,
-          flowAt: intent.timestamp,
-          clientRequestId: intent.clientRequestId,
-        });
-        intentRef.current = null;
-        onClose();
-      } catch (err) {
-        Alert.alert('Nakit Hareketi Başarısız', formatPortfolioRpcError(err));
-      } finally {
+        submissionPendingRef.current = false;
         setIsSubmitting(false);
       }
     }
   };
 
-  const isFormValid =
-    !isCashBlocked &&
-    (txType === 'BUY'
-      ? Boolean(selectedInstrument && isValidUUID(selectedInstrument.id)) && tradeCalc.isValid
-      : txType === 'SELL'
-      ? Boolean(selectedInstrument && isValidUUID(selectedInstrument.id)) &&
-        tradeCalc.isValid &&
-        !isInsufficientPositionForSell &&
-        maxOwnedQuantity > 0
-      : cashAmountParsed.isValid);
+  const isFormValid = Boolean(selectedInstrument && isValidUUID(selectedInstrument.id)) &&
+    tradeCalc.isValid && !isInsufficientPositionForSell;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -595,18 +461,11 @@ export function TransactionModal({
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={[styles.modalScrollableInner, { minHeight: 480 }]}
           >
-            {/* 1. Action Type Selector Tabs (BUY / SELL / DEPOSIT / WITHDRAWAL) */}
+            {/* 1. Action Type Selector Tabs (BUY / SELL) */}
             <View style={[styles.txTypeTabsContainer, { backgroundColor: theme.surfaceElevated }]}>
-              {(['BUY', 'SELL', 'DEPOSIT', 'WITHDRAWAL'] as TxModeType[]).map((type) => {
+              {(['BUY', 'SELL'] as TxModeType[]).map((type) => {
                 const isActive = txType === type;
-                const label =
-                  type === 'BUY'
-                    ? 'Alış'
-                    : type === 'SELL'
-                      ? 'Satış'
-                      : type === 'DEPOSIT'
-                        ? 'Yatır'
-                        : 'Çek';
+                const label = type === 'BUY' ? 'Alış' : 'Satış';
 
                 return (
                   <TouchableOpacity
@@ -650,66 +509,6 @@ export function TransactionModal({
               exiting={FadeOutDown.duration(160)}
               style={styles.tabAnimatedContainer}
             >
-              {/* 1.B Currency Selector for DEPOSIT / WITHDRAWAL */}
-              {(txType === 'DEPOSIT' || txType === 'WITHDRAWAL') && (
-                <View style={styles.cashCurrencySection}>
-                  <Text style={[styles.inputLabel, { color: theme.textSecondary, marginBottom: 6 }]}>
-                    Hesap Para Birimi:
-                  </Text>
-                  <View style={styles.cashCurrencySelectorRow}>
-                    <TouchableOpacity
-                      style={[
-                        styles.cashCurrencyPill,
-                        cashFlowCurrency === 'TRY'
-                          ? { backgroundColor: theme.tint, borderColor: theme.tint }
-                          : { backgroundColor: theme.surfaceElevated, borderColor: theme.border },
-                      ]}
-                      onPress={() => {
-                        setCashFlowCurrency('TRY');
-                        intentRef.current = null;
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <Text
-                        style={[
-                          styles.cashCurrencyPillText,
-                          {
-                            color: cashFlowCurrency === 'TRY' ? (isDark ? '#171416' : '#FFFFFF') : theme.text,
-                          },
-                        ]}
-                      >
-                        ₺ Türk Lirası (TRY)
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[
-                        styles.cashCurrencyPill,
-                        cashFlowCurrency === 'USD'
-                          ? { backgroundColor: theme.tint, borderColor: theme.tint }
-                          : { backgroundColor: theme.surfaceElevated, borderColor: theme.border },
-                      ]}
-                      onPress={() => {
-                        setCashFlowCurrency('USD');
-                        intentRef.current = null;
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <Text
-                        style={[
-                          styles.cashCurrencyPillText,
-                          {
-                            color: cashFlowCurrency === 'USD' ? (isDark ? '#171416' : '#FFFFFF') : theme.text,
-                          },
-                        ]}
-                      >
-                        $ Amerikan Doları (USD)
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-
               {/* 2. SELL Mode: Empty State when 0 owned positions */}
               {txType === 'SELL' && ownedInstruments.length === 0 && (
                 <View style={[styles.emptyOwnedCard, { backgroundColor: theme.surfaceElevated, borderColor: theme.borderSubtle }]}>
@@ -1027,7 +826,7 @@ export function TransactionModal({
                   <View style={styles.inputRow}>
                     <View style={[styles.inputGroup, { flex: 1 }]}>
                       <Text style={[styles.inputLabel, { color: theme.textSecondary }]}>
-                        {txType === 'BUY' || txType === 'SELL' ? 'Miktar (Adet)' : `Tutar (${cashFlowCurrency})`}
+                        Miktar (Adet)
                       </Text>
                       <TextInput
                         style={[
@@ -1038,6 +837,7 @@ export function TransactionModal({
                             borderColor: theme.border,
                           },
                         ]}
+                        accessibilityLabel="Adet"
                         value={quantityInput}
                         onChangeText={(val) => {
                           setQuantityInput(val);
@@ -1063,6 +863,7 @@ export function TransactionModal({
                               borderColor: theme.border,
                             },
                           ]}
+                          accessibilityLabel="Birim fiyat"
                           value={priceInput}
                           onChangeText={(val) => {
                             setPriceInput(val);
@@ -1071,7 +872,7 @@ export function TransactionModal({
                           keyboardType={Platform.OS === 'ios' ? 'decimal-pad' : 'numeric'}
                           placeholder={
                             selectedInstrument?.hasPrice && selectedInstrument.price !== null
-                              ? selectedInstrument.price.toFixed(2)
+                              ? formatTradePrice(selectedInstrument.price, selectedInstrument.market)
                               : '0.00'
                           }
                           placeholderTextColor={theme.textMuted}
@@ -1108,9 +909,9 @@ export function TransactionModal({
 
                   {/* Insufficient Position Warning for SELL Mode */}
                   {isInsufficientPositionForSell && (
-                    <View style={[styles.cashWarningBox, { backgroundColor: 'rgba(185, 78, 72, 0.12)', marginBottom: 12 }]}>
+                    <View style={[styles.positionWarningBox, { backgroundColor: 'rgba(185, 78, 72, 0.12)', marginBottom: 12 }]}>
                       <IconSymbol size={13} name="exclamationmark.triangle.fill" color={theme.negative} />
-                      <Text style={[styles.cashWarningText, { color: theme.negative }]}>
+                      <Text style={[styles.positionWarningText, { color: theme.negative }]}>
                         Yetersiz Pozisyon: Portföyünüzde en fazla {maxOwnedQuantity} adet {selectedInstrument?.symbol} bulunmaktadır.
                       </Text>
                     </View>
@@ -1119,92 +920,16 @@ export function TransactionModal({
                   {/* Total Calculation Preview */}
                   <View style={[styles.txTotalPreview, { backgroundColor: theme.surfaceHighlight }]}>
                     <Text style={[styles.txTotalLabel, { color: theme.textSecondary }]}>
-                      {txType === 'DEPOSIT' || txType === 'WITHDRAWAL'
-                        ? 'İşlem Tutarı:'
-                        : txType === 'SELL'
+                      {txType === 'SELL'
                           ? 'Tahmini Satış Geliri:'
                           : 'Hesaplanan Toplam Tutar:'}
                     </Text>
                     <Text style={[styles.txTotalValue, { color: theme.text }]}>
-                      {txType === 'DEPOSIT' || txType === 'WITHDRAWAL'
-                        ? cashAmountParsed.isValid && cashAmountParsed.value !== null
-                          ? formatCurrency(cashAmountParsed.value, cashFlowCurrency)
-                          : '—'
-                        : tradeCalc.isValid && tradeCalc.total !== null
+                      {tradeCalc.isValid && tradeCalc.total !== null
                           ? formatCurrency(tradeCalc.total, selectedInstrument?.currency ?? 'TRY')
                           : '—'}
                     </Text>
                   </View>
-
-                  {/* Available Cash & Validation Warnings */}
-                  {(txType === 'BUY' || txType === 'DEPOSIT' || txType === 'WITHDRAWAL' || isCashInitialized === false) && (
-                    <View style={[styles.cashStatusCard, { backgroundColor: theme.surfaceElevated, borderColor: theme.borderSubtle }]}>
-                      {(txType === 'BUY' || txType === 'DEPOSIT' || txType === 'WITHDRAWAL') && (
-                        <View style={styles.cashStatusRow}>
-                          <Text style={[styles.cashStatusLabel, { color: theme.textSecondary }]}>
-                            Kullanılabilir {txType === 'BUY' ? selectedCurrency : cashFlowCurrency} Nakit:
-                          </Text>
-                          <Text style={[styles.cashStatusValue, { color: theme.text }]}>
-                            {isCashInitialized !== false
-                              ? (txType === 'BUY' ? availableCashForBuyInfo.formatted : availableCashForFlowInfo.formatted)
-                              : 'Kurulum Gerekli'}
-                          </Text>
-                        </View>
-                      )}
-
-                      {isCashInitialized === false && (
-                        <View style={[styles.cashWarningBox, { backgroundColor: 'rgba(208, 165, 103, 0.12)' }]}>
-                          <IconSymbol size={13} name="exclamationmark.triangle.fill" color={theme.warning} />
-                          <Text style={[styles.cashWarningText, { color: theme.warning }]}>
-                            Nakit bakiyesi kurulmamış. Lütfen önce nakit bakiyenizi kurun.
-                          </Text>
-                          {onOpenCashSetup && (
-                            <TouchableOpacity onPress={onOpenCashSetup} style={styles.cashSetupLinkBtn}>
-                              <Text style={[styles.cashSetupLinkText, { color: theme.tint }]}>Kurulum Yap</Text>
-                            </TouchableOpacity>
-                          )}
-                        </View>
-                      )}
-
-                      {isBalanceUnavailableForBuy && (
-                        <View style={[styles.cashWarningBox, { backgroundColor: 'rgba(208, 165, 103, 0.12)' }]}>
-                          <IconSymbol size={13} name="exclamationmark.triangle.fill" color={theme.warning} />
-                          <Text style={[styles.cashWarningText, { color: theme.warning }]}>
-                            Nakit bakiyesi doğrulanamadı. Lütfen portföyü yenileyiniz.
-                          </Text>
-                        </View>
-                      )}
-
-                      {isBalanceUnavailableForWithdrawal && (
-                        <View style={[styles.cashWarningBox, { backgroundColor: 'rgba(208, 165, 103, 0.12)' }]}>
-                          <IconSymbol size={13} name="exclamationmark.triangle.fill" color={theme.warning} />
-                          <Text style={[styles.cashWarningText, { color: theme.warning }]}>
-                            Nakit bakiyesi doğrulanamadı. Lütfen portföyü yenileyiniz.
-                          </Text>
-                        </View>
-                      )}
-
-                      {isInsufficientCashForBuy && (
-                        <View style={[styles.cashWarningBox, { backgroundColor: 'rgba(185, 78, 72, 0.12)' }]}>
-                          <IconSymbol size={13} name="exclamationmark.triangle.fill" color={theme.negative} />
-                          <Text style={[styles.cashWarningText, { color: theme.negative }]}>
-                            Yetersiz nakit. Kullanılabilir {selectedCurrency} bakiyeniz:{' '}
-                            {availableCashForBuyInfo.formatted}
-                          </Text>
-                        </View>
-                      )}
-
-                      {isInsufficientCashForWithdrawal && (
-                        <View style={[styles.cashWarningBox, { backgroundColor: 'rgba(185, 78, 72, 0.12)' }]}>
-                          <IconSymbol size={13} name="exclamationmark.triangle.fill" color={theme.negative} />
-                          <Text style={[styles.cashWarningText, { color: theme.negative }]}>
-                            Yetersiz nakit. Kullanılabilir {cashFlowCurrency} bakiyeniz:{' '}
-                            {availableCashForFlowInfo.formatted}
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  )}
 
                   {/* Submit CTA */}
                   <TouchableOpacity
@@ -1231,13 +956,7 @@ export function TransactionModal({
                         ]}
                       >
                         ✓{' '}
-                        {txType === 'BUY'
-                          ? 'Alış İşlemini Kaydet'
-                          : txType === 'SELL'
-                            ? 'Satış İşlemini Kaydet'
-                            : txType === 'DEPOSIT'
-                              ? `${cashFlowCurrency} Yatırma İşlemini Kaydet`
-                              : `${cashFlowCurrency} Çekme İşlemini Kaydet`}
+                        {txType === 'BUY' ? 'Alış İşlemini Kaydet' : 'Satış İşlemini Kaydet'}
                       </Text>
                     )}
                   </TouchableOpacity>
@@ -1320,25 +1039,6 @@ const styles = StyleSheet.create({
   txTypeTabText: {
     fontSize: 12,
     letterSpacing: 0.1,
-  },
-  cashCurrencySection: {
-    marginBottom: 14,
-  },
-  cashCurrencySelectorRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  cashCurrencyPill: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cashCurrencyPillText: {
-    fontSize: 12,
-    fontWeight: '700',
   },
   instrumentSearchSection: {
     marginBottom: 14,
@@ -1561,27 +1261,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800',
   },
-  cashStatusCard: {
-    borderRadius: 12,
-    borderWidth: 1,
-    padding: 12,
-    marginBottom: 16,
-    gap: 8,
-  },
-  cashStatusRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  cashStatusLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  cashStatusValue: {
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  cashWarningBox: {
+  positionWarningBox: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -1589,19 +1269,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     flexWrap: 'wrap',
   },
-  cashWarningText: {
+  positionWarningText: {
     fontSize: 11,
     fontWeight: '600',
     flex: 1,
-  },
-  cashSetupLinkBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  cashSetupLinkText: {
-    fontSize: 11,
-    fontWeight: '700',
-    textDecorationLine: 'underline',
   },
 });

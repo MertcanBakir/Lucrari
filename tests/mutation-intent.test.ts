@@ -1,14 +1,4 @@
-/**
- * Lucrari — Mutation Intent & Retry Idempotency Unit Tests
- * 
- * Tests pure mutation intent resolution across network failures, form changes, and reset lifecycle:
- * 1. Initial attempt creates UUID and timestamp.
- * 2. Simulated network error retry with same payload preserves clientRequestId and timestamp.
- * 3. Modifying quantity, price, instrument, action, or currency mints a new UUID and timestamp.
- * 4. DEPOSIT and WITHDRAWAL preserve flowAt and clientRequestId on retry.
- * 5. Cash setup preserves clientRequestId on retry.
- * 6. createResetIntent generates fresh clientRequestId on each distinct user confirmation.
- */
+/** Portfolio calculations, validation and request behavior for the simplified model. */
 
 import { describe, it } from '@jest/globals';
 import assert from 'node:assert/strict';
@@ -76,23 +66,6 @@ describe('Mutation Intent & Retry Idempotency', () => {
     const intent2 = getOrCreateMutationIntent(intent1, payloadKey2, mockUuidGenerator, mockTimeGenerator);
 
     assert.notStrictEqual(intent2.clientRequestId, intent1.clientRequestId);
-  });
-
-  it('should preserve intent for DEPOSIT and WITHDRAWAL retries', () => {
-    const depositKey = 'DEPOSIT:5000:USD';
-    const intent1 = getOrCreateMutationIntent(null, depositKey, mockUuidGenerator, mockTimeGenerator);
-    const intent2 = getOrCreateMutationIntent(intent1, depositKey, mockUuidGenerator, mockTimeGenerator);
-
-    assert.strictEqual(intent2.clientRequestId, intent1.clientRequestId);
-    assert.strictEqual(intent2.timestamp, intent1.timestamp);
-  });
-
-  it('should preserve intent for Cash Account Setup retries', () => {
-    const setupKey = '25000:1000';
-    const intent1 = getOrCreateMutationIntent(null, setupKey, mockUuidGenerator, mockTimeGenerator);
-    const intent2 = getOrCreateMutationIntent(intent1, setupKey, mockUuidGenerator, mockTimeGenerator);
-
-    assert.strictEqual(intent2.clientRequestId, intent1.clientRequestId);
   });
 
   it('createResetIntent should generate fresh clientRequestId on each distinct user confirmation call', () => {

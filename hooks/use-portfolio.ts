@@ -1,15 +1,4 @@
-/**
- * Lucrari — usePortfolio Custom Hook
- * 
- * Manages live Supabase portfolio state:
- * - Anonymous Auth & default portfolio initialization (with in-flight deduplication)
- * - In-flight deduplicated parallel fetching of positions, single source-of-truth cash state & live USD/TRY FX rate
- * - Out-of-order race condition prevention via request sequence counters
- * - Loading, Refreshing, Stale-Data, Empty, and Error state separation
- * - Pure aggregate financial calculations (Total Portfolio Value = Positions + Cash)
- * - Unified single mutation invalidation strategy via `subscribePortfolioChanges`
- * - Direct mutation methods (`initializeCashAccounts`, `addTransaction`, `addCashFlow`, `reverseTransaction`, `resetInvestments`)
- */
+/** Live portfolio state, manual cash and transaction mutations. */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from '@/context/auth-context';
@@ -17,17 +6,13 @@ import { ensureAnonymousSession } from '@/services/auth/auth-service';
 import {
   ensureDefaultPortfolio,
   fetchPortfolioDataCombined,
-  initializePortfolioCashAccounts,
+  setPortfolioCash,
   recordTransaction,
-  recordCashFlow,
   reverseTransaction,
-  reverseCashFlow,
   resetMyInvestments,
   subscribePortfolioChanges,
   type RecordTransactionParams,
-  type RecordCashFlowParams,
   type ReverseTransactionParams,
-  type ReverseCashFlowParams,
   type ResetInvestmentsParams,
 } from '@/services/portfolio/portfolio-service';
 import { type FxRateInfo } from '@/services/portfolio/fx-rate-service';
@@ -43,10 +28,9 @@ import { createScopedLogger } from '@/utils/logger';
 import type {
   Portfolio,
   PortfolioPosition,
-  PortfolioCashState,
-  InitializeCashAccountsResult,
+  PortfolioCash,
+  PortfolioRealizedPnl,
   TransactionRecordResult,
-  CashFlowRecordResult,
   ResetInvestmentsResult,
 } from '@/types/database';
 
@@ -72,7 +56,8 @@ export function usePortfolio() {
   const { user } = useAuth();
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [positions, setPositions] = useState<PortfolioPosition[]>([]);
-  const [cashState, setCashState] = useState<PortfolioCashState | null>(null);
+  const [cash, setCash] = useState<PortfolioCash | null>(null);
+  const [realizedPnl, setRealizedPnl] = useState<PortfolioRealizedPnl | null>(null);
   const [fxRateInfo, setFxRateInfo] = useState<FxRateInfo | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
@@ -122,7 +107,8 @@ export function usePortfolio() {
       if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return;
 
       setPositions(combined.positions);
-      setCashState(combined.cashState);
+      setCash(combined.cash);
+      setRealizedPnl(combined.realizedPnl);
       setFxRateInfo(combined.fxRateInfo);
 
       const hasStaleMarketData =
@@ -133,17 +119,17 @@ export function usePortfolio() {
       setError(null);
       lastFetchedTimestampRef.current = Date.now();
 
-      log.info('Portföy verileri ve canlı kur başarıyla yüklendi', {
-        portfolioId: userPortfolio.id,
-        positionCount: combined.positions.length,
-        isCashInitialized: combined.cashState.isInitialized,
-        fxRate: combined.fxRateInfo.rate,
+      log.debug('portfolio.load.completed', {
+        message: 'Portfolio load completed.',
+        context: { portfolioId: userPortfolio.id, positionCount: combined.positions.length, fxRate: combined.fxRateInfo.rate }
       });
     } catch (err) {
       if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return;
 
-      const rawMsg = err instanceof Error ? err.message : String(err);
-      log.error('Portföy yükleme hatası (usePortfolio)', { error: rawMsg });
+      log.error('portfolio.load.failed', {
+        message: 'Portfolio load failed.',
+        error: err
+      });
 
       const friendlyMessage = sanitizePortfolioErrorMessage(err);
       setError(friendlyMessage);
@@ -168,7 +154,9 @@ export function usePortfolio() {
   // Reactive subscription to all global portfolio mutations (single invalidation strategy)
   useEffect(() => {
     const unsubscribe = subscribePortfolioChanges(() => {
-      log.info('Portföy mutasyon bildirimi alındı, veriler reaktif olarak yenileniyor...');
+      log.debug('portfolio.refresh.requested', {
+        message: 'Portfolio refresh requested.'
+      });
       loadPortfolioData(true, true);
     });
     return unsubscribe;
@@ -181,36 +169,18 @@ export function usePortfolio() {
 
   // Computed Portfolio Aggregate Metrics using pure financial math domain functions
   const stats = useMemo<PortfolioStats>(() => {
-    return calculatePortfolioStats(positions, cashState, fxRateInfo);
-  }, [positions, cashState, fxRateInfo]);
+    return calculatePortfolioStats(positions, cash, fxRateInfo, realizedPnl);
+  }, [positions, cash, fxRateInfo, realizedPnl]);
 
   // Dynamic Allocation Breakdown Items
   const allocationItems = useMemo<AllocationItem[]>(() => {
     return calculateAllocationItems(stats);
   }, [stats]);
 
-  /**
-   * Initializes cash accounts with explicit TRY & USD opening balances.
-   */
-  const initializeCashAccounts = useCallback(
-    async (
-      tryOpeningBalance: number,
-      usdOpeningBalance: number,
-      clientRequestId?: string
-    ): Promise<InitializeCashAccountsResult> => {
-      if (!portfolio) {
-        throw new Error('Aktif portföy bulunamadı.');
-      }
-
-      return await initializePortfolioCashAccounts({
-        portfolioId: portfolio.id,
-        tryOpeningBalance,
-        usdOpeningBalance,
-        clientRequestId,
-      });
-    },
-    [portfolio]
-  );
+  const updateCash = useCallback(async (tryBalance: number, usdBalance: number) => {
+    if (!portfolio) throw new Error('Aktif portföy bulunamadı.');
+    await setPortfolioCash({ portfolioId: portfolio.id, tryBalance, usdBalance });
+  }, [portfolio]);
 
   /**
    * Adds a transaction. Invalidation is automatically dispatched via notifyPortfolioChanged.
@@ -230,23 +200,6 @@ export function usePortfolio() {
   );
 
   /**
-   * Adds a cash flow (deposit/withdrawal). Invalidation is automatically dispatched.
-   */
-  const addCashFlow = useCallback(
-    async (params: Omit<RecordCashFlowParams, 'portfolioId'>): Promise<CashFlowRecordResult> => {
-      if (!portfolio) {
-        throw new Error('Aktif portföy bulunamadı.');
-      }
-
-      return await recordCashFlow({
-        ...params,
-        portfolioId: portfolio.id,
-      });
-    },
-    [portfolio]
-  );
-
-  /**
    * Reverses a transaction with audit trail. Invalidation is automatically dispatched.
    */
   const reverseTx = useCallback(
@@ -256,19 +209,7 @@ export function usePortfolio() {
     []
   );
 
-  /**
-   * Reverses a cash flow with audit trail. Invalidation is automatically dispatched.
-   */
-  const reverseFlow = useCallback(
-    async (params: ReverseCashFlowParams) => {
-      return await reverseCashFlow(params);
-    },
-    []
-  );
-
-  /**
-   * Clears all transactions, cash flows and positions using reset_my_investments RPC.
-   */
+  /** Live portfolio state, manual cash and transaction mutations. */
   const resetInvestments = useCallback(async (params: ResetInvestmentsParams): Promise<ResetInvestmentsResult> => {
     return await resetMyInvestments(params);
   }, []);
@@ -276,25 +217,20 @@ export function usePortfolio() {
   return {
     portfolio,
     positions,
-    cashState,
+    cash,
     fxRateInfo,
     usdTryRate: fxRateInfo?.rate ?? null,
     stats,
     allocationItems,
-    isCashInitialized: stats.isCashInitialized,
-    availableCashTry: stats.cashTry,
-    availableCashUsd: stats.cashUsd,
     isLoading,
     isRefreshing,
     isStale,
     error,
     lastFetchedTimestamp: lastFetchedTimestampRef.current,
     refreshPortfolio,
-    initializeCashAccounts,
+    updateCash,
     addTransaction,
-    addCashFlow,
     reverseTransaction: reverseTx,
-    reverseCashFlow: reverseFlow,
     resetInvestments,
   };
 }

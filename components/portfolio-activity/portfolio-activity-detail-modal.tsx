@@ -2,7 +2,7 @@
  * Lucrari — Portfolio Activity Detail Modal
  * 
  * Read-only modal bottom sheet presenting full historical details of a transaction
- * or cash flow without exposing raw UUIDs or performing destructive mutations.
+ *  without exposing raw UUIDs or performing destructive mutations.
  */
 
 import React, { memo, useCallback } from 'react';
@@ -57,7 +57,6 @@ export const PortfolioActivityDetailModal = memo(function PortfolioActivityDetai
   if (!item) return null;
 
   const typeMeta = getActivityTypeMeta(item.activityType);
-  const isTransaction = item.sourceKind === 'TRANSACTION';
   const isReversed = item.isReversed;
 
   let badgeColor = theme.tint;
@@ -66,15 +65,13 @@ export const PortfolioActivityDetailModal = memo(function PortfolioActivityDetai
   if (isReversed) {
     badgeColor = theme.textMuted;
     badgeBg = theme.surfaceHighlight;
-  } else if (item.activityType === 'BUY' || item.activityType === 'DEPOSIT') {
+  } else if (item.activityType === 'BUY') {
     badgeColor = isDark ? '#4ECDC4' : '#0A7EA4';
     badgeBg = isDark ? 'rgba(78, 205, 196, 0.15)' : 'rgba(10, 126, 164, 0.1)';
   } else if (item.activityType === 'SELL') {
     badgeColor = isDark ? '#9BA1A6' : '#687076';
     badgeBg = theme.surfaceHighlight;
-  } else if (item.activityType === 'WITHDRAWAL') {
-    badgeColor = isDark ? '#FF6B6B' : '#DC3545';
-    badgeBg = isDark ? 'rgba(255, 107, 107, 0.15)' : 'rgba(220, 53, 69, 0.1)';
+
   }
 
   return (
@@ -164,7 +161,7 @@ export const PortfolioActivityDetailModal = memo(function PortfolioActivityDetai
             </View>
 
             {/* Transaction Specific Rows */}
-            {isTransaction ? (
+
               <View style={styles.detailsGroup}>
                 <View style={[styles.detailRow, { borderBottomColor: theme.borderSubtle }]}>
                   <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Varlık</Text>
@@ -203,7 +200,6 @@ export const PortfolioActivityDetailModal = memo(function PortfolioActivityDetai
                   </Text>
                 </View>
               </View>
-            ) : null}
 
             {/* Common Date & Notes Rows */}
             <View style={styles.detailsGroup}>

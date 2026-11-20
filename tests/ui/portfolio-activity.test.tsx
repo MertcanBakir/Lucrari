@@ -54,11 +54,9 @@ it('opens a selected trade and marks a reversed cash movement', async () => {
   const view = render(<PortfolioActivityItemCard item={activity} onPress={select} />);
   fireEvent.press(screen.getByRole('button', { name: /Varlık Alışı, THYAO/ }));
   await waitFor(() => expect(select).toHaveBeenCalledWith(activity));
-  const cash = { ...activity, sourceKind: 'CASH_FLOW', activityType: 'WITHDRAWAL',
-    symbol: null, companyName: null, quantity: null, unitPrice: null, isReversed: true, reversedAt: date } as const;
-  view.rerender(<PortfolioActivityItemCard item={cash} onPress={select} />);
-  expect(screen.getByRole('button', { name: /Para Çekme.*Geri Alındı/ })).toBeOnTheScreen();
-  expect(screen.queryByText('THYAO')).toBeNull();
+  const reversed = { ...activity, isReversed: true, reversedAt: date };
+  view.rerender(<PortfolioActivityItemCard item={reversed} onPress={select} />);
+  expect(screen.getByRole('button', { name: /Varlık Alışı.*Geri Alındı/ })).toBeOnTheScreen();
 });
 
 it('shows trade fields and reversal reason in the activity detail', async () => {
@@ -90,24 +88,20 @@ afterEach(() => {
 it.each([
   ['BUY', 'Varlık Alışı'],
   ['SELL', 'Varlık Satışı'],
-  ['DEPOSIT', 'Para Yatırma'],
-  ['WITHDRAWAL', 'Para Çekme'],
 ] as const)('shows the correct %s record and optional fields in dark mode', async (activityType, label) => {
   jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'dark' } as ReturnType<typeof useAppTheme>);
   jest.replaceProperty(Platform, 'OS', 'web');
   const close = jest.fn();
-  const isCash = activityType === 'DEPOSIT' || activityType === 'WITHDRAWAL';
   const item = {
-    ...activity, activityType, sourceKind: isCash ? 'CASH_FLOW' as const : 'TRANSACTION' as const,
-    companyName: null, market: null, notes: null, symbol: isCash ? null : 'THYAO',
+    ...activity, activityType, sourceKind: 'TRANSACTION' as const,
+    companyName: null, market: null, notes: null, symbol: 'THYAO',
   };
   const view = render(<><PortfolioActivityDetailModal item={item} visible onClose={close} />
     <PortfolioActivityItemCard item={item} onPress={jest.fn()} /></>);
   expect(screen.getByText(`${label} Detayı`)).toBeOnTheScreen();
   expect(screen.queryByText('Şirket')).toBeNull();
   expect(screen.queryByText('Açıklama / Not')).toBeNull();
-  if (isCash) expect(screen.queryByText('Birim Fiyat')).toBeNull();
-  else expect(screen.getByText('Birim Fiyat')).toBeOnTheScreen();
+  expect(screen.getByText('Birim Fiyat')).toBeOnTheScreen();
   view.rerender(<><PortfolioActivityDetailModal item={{ ...item, isReversed: true }} visible onClose={close} />
     <PortfolioActivityItemCard item={item} onPress={jest.fn()} /></>);
   expect(screen.getByText('Bu İşlem Geri Alınmıştır')).toBeOnTheScreen();
