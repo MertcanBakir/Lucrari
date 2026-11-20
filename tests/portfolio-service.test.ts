@@ -598,3 +598,47 @@ it('does not publish failed manual cash edits', async () => {
     expect(change).not.toHaveBeenCalled();
   } finally { unsubscribe(); rpc.mockRestore(); }
 });
+
+it.each([null, undefined, '', true, {}, -1, NaN, Infinity, 'invalid'])(
+  'rejects an invalid manual cash balance %p instead of inventing a zero', async (balance) => {
+    const client = getSupabaseClient();
+    const rpc = jest.spyOn(client, 'rpc').mockResolvedValue({
+      data: { try_balance: balance, usd_balance: 0 }, error: null,
+    } as unknown as Awaited<ReturnType<typeof client.rpc>>);
+    try {
+      await expect(fetchPortfolioCash('portfolio')).rejects.toThrow(/Geçersiz finansal tutar/);
+    } finally {
+      rpc.mockRestore();
+    }
+  }
+);
+
+it('reads explicit zero cash and permits negative realized profit while rejecting missing results', async () => {
+  const client = getSupabaseClient();
+  const rpc = jest.spyOn(client, 'rpc');
+  try {
+    rpc.mockResolvedValueOnce({ data: { try_balance: '0', usd_balance: '12.50' }, error: null } as any);
+    await expect(fetchPortfolioCash('portfolio')).resolves.toEqual({ tryBalance: 0, usdBalance: 12.5 });
+    rpc.mockResolvedValueOnce({ data: { try_pnl: '-50.25', usd_pnl: 0 }, error: null } as any);
+    await expect(fetchRealizedPnl('portfolio')).resolves.toEqual({ tryPnl: -50.25, usdPnl: 0 });
+    rpc.mockResolvedValueOnce({ data: null, error: null } as any);
+    await expect(fetchPortfolioCash('portfolio')).rejects.toThrow(/Geçersiz finansal tutar/);
+    rpc.mockResolvedValueOnce({ data: null, error: null } as any);
+    await expect(fetchRealizedPnl('portfolio')).rejects.toThrow(/Geçersiz finansal tutar/);
+  } finally {
+    rpc.mockRestore();
+  }
+});
+
+it('returns an empty position list for no rows and wraps an unexpected transport failure', async () => {
+  const client = getSupabaseClient();
+  const rpc = jest.spyOn(client, 'rpc');
+  try {
+    rpc.mockResolvedValueOnce({ data: null, error: null } as any);
+    await expect(fetchPortfolioPositions('portfolio')).resolves.toEqual([]);
+    rpc.mockRejectedValueOnce(new Error('offline'));
+    await expect(fetchPortfolioPositions('portfolio')).rejects.toThrow(/Pozisyonlar yüklenemedi/);
+  } finally {
+    rpc.mockRestore();
+  }
+});

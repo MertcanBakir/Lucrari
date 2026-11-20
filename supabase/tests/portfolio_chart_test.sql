@@ -1,13 +1,25 @@
 -- Synthetic chart history and access checks, always rolled back.
 begin;
 do $$
-declare u uuid:=gen_random_uuid(); p uuid:=gen_random_uuid(); i uuid; provider text; first_id uuid; second_id uuid;
+declare u uuid:=gen_random_uuid(); p uuid:=gen_random_uuid(); i uuid:=gen_random_uuid(); fx uuid; provider text:='TEST_CHART'; first_id uuid; second_id uuid;
  today date:=(now() at time zone 'Europe/Istanbul')::date;
 begin
  insert into auth.users(id) values(u);
  insert into public.portfolios(id,user_id,name,base_currency,is_default) values(p,u,'Chart test','TRY',false);
- select lp.instrument_id,lp.provider_code into i,provider from public.instrument_latest_prices lp join public.instruments ins on ins.id=lp.instrument_id where ins.market='BIST100' and ins.currency='TRY' and ins.is_active limit 1;
- if i is null then raise exception 'Test requires a BIST quote'; end if;
+ -- Every market quote belongs to this rolled-back fixture, including the FX rate.
+ insert into public.data_providers(code,name,provider_type)
+ values(provider,'Chart test provider','market');
+ insert into public.instruments(id,market,symbol,company_name,asset_type,currency)
+ values(i,'BIST100','TEST_CHART_'||replace(i::text,'-',''),'Chart fixture','stock','TRY');
+ insert into public.instrument_latest_prices(instrument_id,price,currency,price_at,provider_code)
+ values(i,100,'TRY',now(),provider);
+ insert into public.instruments(market,symbol,company_name,asset_type,currency,is_active)
+ values('FX','USDTRY','Test USD/TRY','fx','TRY',true)
+ on conflict(market,symbol) do update set asset_type='fx',currency='TRY',is_active=true
+ returning id into fx;
+ insert into public.instrument_latest_prices(instrument_id,price,currency,price_at,provider_code,is_stale)
+ values(fx,40,'TRY',now(),provider,false)
+ on conflict(instrument_id) do update set price=40,currency='TRY',price_at=now(),provider_code=excluded.provider_code,is_stale=false;
  insert into public.portfolio_snapshots(portfolio_id,snapshot_date,base_currency,cash_value_base,holdings_value_base,total_value_base,total_cost_base,realized_pnl_base,unrealized_pnl_base,absolute_pnl_base,calculation_version,usd_try_rate,market_breakdown_complete)
  values(p,today-2,'TRY',0,3000,3000,2700,100,300,400,1,30,false) returning id into first_id;
  insert into public.portfolio_snapshots(portfolio_id,snapshot_date,base_currency,cash_value_base,holdings_value_base,total_value_base,total_cost_base,realized_pnl_base,unrealized_pnl_base,absolute_pnl_base,calculation_version,usd_try_rate,market_breakdown_complete)
@@ -22,6 +34,7 @@ end $$;
 set local role authenticated;
 do $$ declare p uuid:=current_setting('test.portfolio')::uuid; rows_n integer; amount numeric; r record;
 begin
+ if not exists(select 1 from public.portfolios where id=current_setting('test.portfolio')::uuid) then raise exception 'Owner cannot read own portfolio'; end if;
  select count(*),max(value) into rows_n,amount from public.get_portfolio_chart(p,'ALL','ALL','USD','VALUE');
  if rows_n<>2 or amount<>150 then raise exception 'Historical FX conversion failed'; end if;
  select max(value) into amount from public.get_portfolio_chart(p,'ALL','ALL','USD','PNL');
@@ -36,6 +49,7 @@ begin
  begin perform public.get_portfolio_chart(p,'INVALID'); raise exception 'Invalid filter accepted';
  exception when raise_exception then if sqlerrm<>'portfolio_chart_invalid_filter' then raise; end if; end;
  perform set_config('request.jwt.claim.sub',gen_random_uuid()::text,true);
+ if exists(select 1 from public.portfolios where id=p) then raise exception 'Portfolio ownership RLS leaked'; end if;
  if exists(select 1 from public.portfolio_snapshot_markets where snapshot_id in(select id from public.portfolio_snapshots where portfolio_id=p)) then raise exception 'Market RLS leaked'; end if;
  begin perform public.get_portfolio_chart(p); raise exception 'Cross-user chart accepted';
  exception when raise_exception then if sqlerrm<>'portfolio_not_found_or_forbidden' then raise; end if; end;

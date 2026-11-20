@@ -1,6 +1,7 @@
+import { deferred } from '../helpers/deferred';
 import { useAppTheme } from '@/context/theme-context';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { Alert } from 'react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { Alert, FlatList, Platform } from 'react-native';
 import { CashBalanceModal } from '@/components/portfolio/cash-balance-modal';
 import { PortfolioActivityEntryCard } from '@/components/portfolio/portfolio-activity-entry-card';
 import { PortfolioAllocationCard } from '@/components/portfolio/portfolio-allocation-card';
@@ -204,4 +205,102 @@ it('restores market tabs, owned-asset search and the full-sale shortcut', async 
   fireEvent.changeText(screen.getByLabelText('Birim fiyat'), '25');
   fireEvent.press(screen.getByText(/Satış İşlemini Kaydet/));
   await waitFor(() => expect(submit).toHaveBeenCalledWith(expect.objectContaining({ currency: 'USD', quantity: 8, unitPrice: 25 })));
+});
+
+it('preserves a quick trade retry intent and creates a new one after the quantity changes', async () => {
+  jest.replaceProperty(Platform, 'OS', 'web');
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'dark' } as ReturnType<typeof useAppTheme>);
+  const submit = jest.fn().mockRejectedValueOnce(new Error('offline'))
+    .mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(undefined);
+  const close = jest.fn();
+  render(<PositionTradeModal visible position={{ ...position, quantity: 1.5, latest_price: null, price_is_stale: true }}
+    initialAction="SELL" onClose={close} onSubmit={submit} />);
+  expect(screen.getByText('Eski Fiyat')).toBeOnTheScreen();
+  fireEvent.press(screen.getByText('%50'));
+  await waitFor(() => expect(screen.getByLabelText('Adet')).toHaveDisplayValue('0.75'));
+  fireEvent.changeText(screen.getByLabelText('Birim fiyat'), '20');
+  fireEvent.press(screen.getByText('Satış İşlemini Kaydet'));
+  await waitFor(() => expect(Alert.alert).toHaveBeenCalled());
+  fireEvent.press(screen.getByText('Satış İşlemini Kaydet'));
+  await waitFor(() => expect(submit).toHaveBeenCalledTimes(2));
+  expect(submit.mock.calls[0][0]).toEqual(submit.mock.calls[1][0]);
+  fireEvent.changeText(screen.getByLabelText('Adet'), '0.5');
+  fireEvent.press(screen.getByText('Satış İşlemini Kaydet'));
+  await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+  expect(submit.mock.calls[2][0]).toMatchObject({ quantity: 0.5, unitPrice: 20 });
+  expect(submit.mock.calls[2][0].clientRequestId).not.toBe(submit.mock.calls[0][0].clientRequestId);
+});
+
+it('keeps invalid manual prices disabled and allows switching an existing position to a buy', async () => {
+  jest.replaceProperty(Platform, 'OS', 'web');
+  const submit = jest.fn().mockResolvedValue(undefined);
+  const props = { visible: true, onClose: jest.fn(), onSubmit: submit };
+  const view = render(<PositionTradeModal {...props} position={null} />);
+  expect(screen.queryByLabelText('Adet')).toBeNull();
+  view.rerender(<PositionTradeModal {...props} initialAction="SELL" position={{
+    ...position, quantity: 0, latest_price: null, change_percent: null, change_amount: null,
+  }} />);
+  fireEvent.press(screen.getByText('+ Alış Yap'));
+  fireEvent.changeText(screen.getByLabelText('Adet'), '2');
+  for (const invalid of ['', '-1', 'invalid']) {
+    fireEvent.changeText(screen.getByLabelText('Birim fiyat'), invalid);
+    expect(screen.getByText('Alış İşlemini Kaydet')).toBeDisabled();
+  }
+  fireEvent.changeText(screen.getByLabelText('Birim fiyat'), '15,25');
+  fireEvent.press(screen.getByText('Alış İşlemini Kaydet'));
+  await waitFor(() => expect(submit).toHaveBeenCalledWith(expect.objectContaining({ quantity: 2, unitPrice: 15.25, transactionType: 'BUY' })));
+});
+
+it('keeps cash open after a failed save, validates USD and blocks duplicate pending saves', async () => {
+  jest.replaceProperty(Platform, 'OS', 'web');
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'dark' } as ReturnType<typeof useAppTheme>);
+  const pending = deferred<void>();
+  const save = jest.fn().mockRejectedValueOnce(new Error('offline')).mockReturnValueOnce(pending.promise);
+  const close = jest.fn();
+  render(<CashBalanceModal visible tryBalance={0} usdBalance={0} onClose={close} onSave={save} />);
+  fireEvent.changeText(screen.getAllByPlaceholderText('0')[1], '-1');
+  fireEvent.press(screen.getByText('Bakiyeleri Kaydet'));
+  expect(screen.getByText(/USD Nakit:/)).toBeOnTheScreen();
+  expect(save).not.toHaveBeenCalled();
+  fireEvent.changeText(screen.getAllByPlaceholderText('0')[1], '5');
+  fireEvent.press(screen.getByText('Bakiyeleri Kaydet'));
+  await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Hata', expect.any(String)));
+  expect(close).not.toHaveBeenCalled();
+  fireEvent.press(screen.getByText('Bakiyeleri Kaydet'));
+  expect(screen.queryByText('Bakiyeleri Kaydet')).toBeNull();
+  expect(save).toHaveBeenCalledTimes(2);
+  await act(async () => pending.resolve());
+  expect(close).toHaveBeenCalledTimes(1);
+});
+
+it('loads additional catalog pages and supports buying a stale instrument with a manual price', async () => {
+  jest.replaceProperty(Platform, 'OS', 'web');
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'dark' } as ReturnType<typeof useAppTheme>);
+  const next = { ...instrument, id: '6ba7b812-9dad-11d1-80b4-00c04fd430c8', symbol: 'OTHER', price: null, hasPrice: false, isStale: true };
+  lookup.mockResolvedValueOnce({ items: [instrument], error: null, isStale: false, hasMore: true })
+    .mockResolvedValueOnce({ items: [next], error: null, isStale: true, hasMore: false });
+  const submit = jest.fn().mockResolvedValue(undefined);
+  const view = render(<TransactionModal visible positions={positions} onClose={jest.fn()} onSubmitTransaction={submit} />);
+  await screen.findByText('THYAO');
+  fireEvent(view.UNSAFE_getByType(FlatList), 'endReached', { distanceFromEnd: 0 });
+  fireEvent.press(await screen.findByText('OTHER'));
+  expect(screen.getAllByText('Eski Fiyat').length).toBeGreaterThan(0);
+  expect(screen.getByLabelText('Birim fiyat')).toHaveDisplayValue('');
+  fireEvent.changeText(screen.getByLabelText('Adet'), '0.25');
+  fireEvent.changeText(screen.getByLabelText('Birim fiyat'), '8');
+  fireEvent.press(screen.getByText(/Alış İşlemini Kaydet/));
+  await waitFor(() => expect(submit).toHaveBeenCalledWith(expect.objectContaining({ instrumentId: next.id, quantity: 0.25, unitPrice: 8 })));
+});
+
+it('shows a controlled error after a thrown catalog request and recovers through retry', async () => {
+  jest.replaceProperty(Platform, 'OS', 'web');
+  lookup.mockRejectedValueOnce(new Error('offline'));
+  render(<TransactionModal visible positions={[]} onClose={jest.fn()} onSubmitTransaction={jest.fn()} />);
+  expect(await screen.findByText(/Piyasa verileri yüklenirken/)).toBeOnTheScreen();
+  fireEvent.press(screen.getByText('Tekrar Dene'));
+  await screen.findByText('THYAO');
+  fireEvent.press(screen.getByText('Satış'));
+  expect(screen.getByText('Portföyünüzde Satılabilir Varlık Yok')).toBeOnTheScreen();
+  fireEvent.press(screen.getByText('Alış'));
+  await screen.findByText('THYAO');
 });

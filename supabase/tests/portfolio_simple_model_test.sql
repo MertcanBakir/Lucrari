@@ -1,10 +1,21 @@
 -- Run after the simplified portfolio migration. Every fixture is rolled back.
 begin;
-do $$ declare u uuid:=gen_random_uuid(); p uuid:=gen_random_uuid(); i uuid; begin
+do $$ declare u uuid:=gen_random_uuid(); p uuid:=gen_random_uuid(); i uuid:=gen_random_uuid(); fx uuid; begin
  insert into auth.users(id) values(u);
  insert into public.portfolios(id,user_id,name,base_currency,is_default) values(p,u,'Moving average test','TRY',false);
- select id into i from public.instruments where currency='TRY' and is_active order by id limit 1;
- if i is null then raise exception 'Test requires an active TRY instrument'; end if;
+ insert into public.instruments(id,market,symbol,company_name,asset_type,currency)
+ values(i,'BIST100','TEST_AVERAGE_'||replace(i::text,'-',''),'Average-cost fixture','stock','TRY');
+ insert into public.data_providers(code,name,provider_type)
+ values('TEST_AVERAGE','Average-cost test provider','market');
+ insert into public.instrument_latest_prices(instrument_id,price,currency,price_at,provider_code)
+ values(i,100,'TRY',now(),'TEST_AVERAGE');
+ insert into public.instruments(market,symbol,company_name,asset_type,currency,is_active)
+ values('FX','USDTRY','Test USD/TRY','fx','TRY',true)
+ on conflict(market,symbol) do update set asset_type='fx',currency='TRY',is_active=true
+ returning id into fx;
+ insert into public.instrument_latest_prices(instrument_id,price,currency,price_at,provider_code,is_stale)
+ values(fx,40,'TRY',now(),'TEST_AVERAGE',false)
+ on conflict(instrument_id) do update set price=40,currency='TRY',price_at=now(),provider_code=excluded.provider_code,is_stale=false;
  perform set_config('test.user',u::text,true);
  perform set_config('test.portfolio',p::text,true);
  perform set_config('test.instrument',i::text,true);

@@ -1,3 +1,5 @@
+import { useAppTheme } from '@/context/theme-context';
+import { useLocalSearchParams } from 'expo-router';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import PortfolioChartScreen from '@/app/portfolio-chart';
 import { useAuth } from '@/context/auth-context';
@@ -6,7 +8,7 @@ import { PortfolioLineChart } from '@/components/portfolio-chart/portfolio-line-
 import type { PortfolioChartPoint } from '@/types/portfolio-chart';
 
 const mockBack = jest.fn();
-jest.mock('expo-router', () => ({ useRouter: () => ({ back: mockBack }), useLocalSearchParams: () => ({ currency: 'USD' }) }));
+jest.mock('expo-router', () => ({ useRouter: () => ({ back: mockBack }), useLocalSearchParams: jest.fn(() => ({ currency: 'USD' })) }));
 jest.mock('@/context/auth-context', () => ({ useAuth: jest.fn() }));
 jest.mock('@/hooks/use-portfolio-chart', () => ({ usePortfolioChart: jest.fn() }));
 const points: PortfolioChartPoint[] = [{ date: '2026-11-01', value: 100, calculationVersion: 2, isPartial: false,
@@ -81,4 +83,46 @@ it('scrubs with stable coordinates, keeps the date after release and limits hapt
     fireEvent(screen.getByTestId('portfolio-chart-plot'), 'responderRelease', { nativeEvent: { touches: [], changedTouches: [] } });
     expect(screen.getByTestId('chart-selected-value').props.children).toMatch(/300/);
   } finally { create.mockRestore(); clock.mockRestore(); }
+});
+
+it('explains missing FX, missing market profit and historical valuation limitations', () => {
+  jest.mocked(useLocalSearchParams).mockReturnValue({ currency: 'TRY', market: 'NASDAQ100' });
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'dark' } as ReturnType<typeof useAppTheme>);
+  const hook = jest.mocked(usePortfolioChart);
+  hook.mockReturnValue({ points: [{ ...points[0], value: null, missingFx: true }], name: '', isLoading: false,
+    error: null, refresh, isStale: false });
+  const view = render(<PortfolioChartScreen />);
+  expect(usePortfolioChart).toHaveBeenLastCalledWith(expect.objectContaining({ currency: 'TRY', market: 'NASDAQ100' }));
+  expect(screen.getByText(/geçmiş dolar kuru bulunamadı/)).toBeOnTheScreen();
+  hook.mockReturnValue({ points: [{ ...points[0], value: null, missingMarketPnl: true }], name: '', isLoading: false,
+    error: null, refresh, isStale: false });
+  view.rerender(<PortfolioChartScreen />);
+  expect(screen.getByText(/toplam kâr\/zarar geçmişi yeni günlük kayıtlarla/)).toBeOnTheScreen();
+  hook.mockReturnValue({ points: [
+    { ...points[0], sourceCount: 20, calculationVersion: 1 },
+    { ...points[0], date: '2026-11-02', sourceCount: 20, isPartial: true, capturedAt: '2026-11-02T12:00:00Z' },
+  ], name: 'Portföy', isLoading: false, error: 'Bağlantı yok', refresh, isStale: true });
+  view.rerender(<PortfolioChartScreen />);
+  expect(screen.getByText(/Son yüklenen grafik gösteriliyor/)).toBeOnTheScreen();
+  expect(screen.getByText(/Son kayıt:/)).toBeOnTheScreen();
+  expect(screen.getByText(/uç değerleri koruyan/)).toBeOnTheScreen();
+  expect(screen.getByText(/önceki maliyet yöntemiyle/)).toBeOnTheScreen();
+  expect(screen.getByText(/güncel olmayan fiyatlar/)).toBeOnTheScreen();
+  fireEvent.press(screen.getByLabelText('Grafik para birimini değiştir'));
+  expect(usePortfolioChart).toHaveBeenLastCalledWith(expect.objectContaining({ currency: 'USD' }));
+});
+
+it('retries authentication when chart history cannot load for a signed-out account', () => {
+  const retryAuth = jest.fn();
+  jest.mocked(useAuth).mockReturnValue({ userId: null, isAuthReady: true, retryAuth } as unknown as ReturnType<typeof useAuth>);
+  jest.mocked(usePortfolioChart).mockReturnValue({ points: [], name: '', isLoading: false,
+    error: 'Oturum gerekli', refresh, isStale: false });
+  render(<PortfolioChartScreen />);
+  fireEvent.press(screen.getByText('Tekrar Dene'));
+  expect(retryAuth).toHaveBeenCalledTimes(1);
+});
+
+afterEach(() => {
+  jest.mocked(useAppTheme).mockReturnValue({ colorScheme: 'light' } as ReturnType<typeof useAppTheme>);
+  jest.restoreAllMocks();
 });
