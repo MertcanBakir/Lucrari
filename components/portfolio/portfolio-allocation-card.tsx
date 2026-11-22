@@ -7,7 +7,7 @@
 
 import React, { useState } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, Platform } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { formatPortfolioValue, type CurrencyMode } from '@/utils/financial-math';

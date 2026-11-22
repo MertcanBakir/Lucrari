@@ -1,3 +1,4 @@
+import { useReducedMotion } from '@/hooks/use-reduced-motion';
 /**
  * Lucrari — Calendar Event Detail Modal Component
  * 
@@ -24,7 +25,7 @@ import {
   ActivityIndicator,
   Linking,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -53,6 +54,7 @@ export function EventDetailModal({
   activeFilter = 'all',
   onClose,
 }: EventDetailModalProps) {
+  const reducedMotion = useReducedMotion();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const theme = Colors[isDark ? 'dark' : 'light'];
@@ -133,7 +135,7 @@ export function EventDetailModal({
     <Modal
       visible={visible}
       transparent
-      animationType="fade"
+      animationType={reducedMotion ? 'none' : 'fade'}
       onRequestClose={onClose}
     >
       <View style={styles.modalOverlay}>

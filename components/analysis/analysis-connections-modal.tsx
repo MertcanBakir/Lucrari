@@ -1,3 +1,4 @@
+import { useReducedMotion } from '@/hooks/use-reduced-motion';
 import { useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -19,6 +20,7 @@ interface Props {
 export function AnalysisConnectionsModal({
   providers, isProvidersLoading, providersError, onRefreshProviders, connections, onClose,
 }: Props) {
+  const reducedMotion = useReducedMotion();
   const { colorScheme } = useAppTheme();
   const theme = Colors[colorScheme === 'dark' ? 'dark' : 'light'];
   const [providerChoice, setProvider] = useState('');
@@ -69,7 +71,7 @@ export function AnalysisConnectionsModal({
   );
 
   return (
-    <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
+    <Modal visible animationType={reducedMotion ? 'none' : 'fade'} presentationStyle="pageSheet" onRequestClose={close}>
       <SafeAreaView style={[styles.screen, { backgroundColor: theme.background }]}>
         <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={[styles.heading, { borderBottomColor: theme.borderSubtle }]}>

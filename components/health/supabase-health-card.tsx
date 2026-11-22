@@ -15,7 +15,7 @@ import {
   ActivityIndicator,
   Platform,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import { useSupabaseHealth } from '@/hooks/use-supabase-health';
 import { formatLatency, formatDateTime, EMPTY_VALUE_PLACEHOLDER } from '@/utils/financial-formatters';
 import { useColorScheme } from '@/hooks/use-color-scheme';

@@ -121,9 +121,9 @@ export function clearCalendarCache(): void {
 export async function fetchMonthlyCalendarEvents(
   year: number,
   month: number,
-  options?: { forceRefresh?: boolean; signal?: AbortSignal }
+  options?: { forceRefresh?: boolean; signal?: AbortSignal; timeZone?: string }
 ): Promise<MonthlyCalendarData> {
-  const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`;
+  const monthKey = `${year}-${String(month + 1).padStart(2, '0')}${options?.timeZone ? `/${options.timeZone}` : ''}`;
 
   // 1. Check in-flight promise map (deduplicate concurrent requests for the same month)
   const existingInFlight = inFlightCalendarFetches.get(monthKey);
@@ -157,8 +157,16 @@ export async function fetchMonthlyCalendarEvents(
   const lastDay = new Date(year, month + 1, 0).getDate();
   const endDateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
-  const startIsoStr = `${startDateStr}T00:00:00.000Z`;
-  const endIsoStr = `${endDateStr}T23:59:59.999Z`;
+  // Expand UTC bounds for a notification timezone, then filter by its calendar date.
+  const padding = options?.timeZone ? 86_400_000 : 0;
+  const startIsoStr = new Date(Date.parse(`${startDateStr}T00:00:00.000Z`) - padding).toISOString();
+  const endIsoStr = new Date(Date.parse(`${endDateStr}T23:59:59.999Z`) + padding).toISOString();
+  const zonedDate = options?.timeZone ? new Intl.DateTimeFormat('en-CA', {
+    timeZone: options.timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }) : null;
+  const zonedTime = options?.timeZone ? new Intl.DateTimeFormat('tr-TR', {
+    timeZone: options.timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }) : null;
 
   const fetchPromise = (async (): Promise<MonthlyCalendarData> => {
     const supabase = getSupabaseClient();
@@ -280,10 +288,11 @@ export async function fetchMonthlyCalendarEvents(
         for (const row of economicRes.data as EconomicEvent[]) {
           if (!row.scheduled_at) continue;
           const dateObj = new Date(row.scheduled_at);
-          const dateKey = formatDateKey(dateObj);
+          const dateKey = zonedDate ? zonedDate.format(dateObj) : formatDateKey(dateObj);
+          if (zonedDate && (dateKey < startDateStr || dateKey > endDateStr)) continue;
 
           const countryFlag = row.country === 'TR' ? 'Türkiye 🇹🇷' : row.country === 'US' ? 'ABD 🇺🇸' : row.country;
-          const timeLabel = formatEventTime(row.scheduled_at);
+          const timeLabel = zonedTime ? zonedTime.format(dateObj) : formatEventTime(row.scheduled_at);
 
           const item: CalendarEventItem = {
             id: `economic-${row.id}`,

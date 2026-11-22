@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Haptics from 'expo-haptics';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { SystemHealthOverallCard } from '@/components/system-health/system-health-overall-card';
 import { SystemHealthJobCard } from '@/components/system-health/system-health-job-card';

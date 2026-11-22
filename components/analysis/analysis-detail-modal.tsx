@@ -1,3 +1,4 @@
+import { useReducedMotion } from '@/hooks/use-reduced-motion';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -44,6 +45,7 @@ export function AnalysisDetailModal({
   onClose,
   onRefresh,
 }: AnalysisDetailModalProps) {
+  const reducedMotion = useReducedMotion();
   const { colorScheme } = useAppTheme();
   const theme = Colors[colorScheme === 'dark' ? 'dark' : 'light'];
   const [openCodes, setOpenCodes] = useState<Set<string>>(new Set());
@@ -165,7 +167,7 @@ export function AnalysisDetailModal({
   if (!analysis) return null;
 
   return (
-    <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+    <Modal visible animationType={reducedMotion ? 'none' : 'fade'} presentationStyle="pageSheet" onRequestClose={onClose}>
       <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
         <View style={[styles.header, { borderBottomColor: theme.borderSubtle }]}>
           <View style={styles.headerText}>

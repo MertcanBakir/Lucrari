@@ -1,3 +1,5 @@
+import { FeedbackToast } from '@/components/feedback/feedback-toast';
+import { useNotificationLifecycle } from '@/hooks/use-notifications';
 import { useEffect } from 'react';
 import * as SplashScreen from 'expo-splash-screen';
 import { DarkTheme, DefaultTheme, ThemeProvider as NavigationThemeProvider } from '@react-navigation/native';
@@ -8,6 +10,7 @@ import 'react-native-reanimated';
 import { ThemeProvider as AppThemeProvider, useAppTheme } from '@/context/theme-context';
 import { AuthProvider, useAuth } from '@/context/auth-context';
 
+SplashScreen.setOptions({ duration: 300, fade: true });
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export const unstable_settings = {
@@ -15,6 +18,7 @@ export const unstable_settings = {
 };
 
 function RootContent() {
+  useNotificationLifecycle();
   const { colorScheme } = useAppTheme();
   const { isAuthReady } = useAuth();
 
@@ -29,6 +33,8 @@ function RootContent() {
     <NavigationThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="notification-settings" options={{ headerShown: false }} />
+        <Stack.Screen name="notification-portfolio" options={{ headerShown: false }} />
         <Stack.Screen name="portfolio-chart" options={{ headerShown: false }} />
         <Stack.Screen name="portfolio-activity" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
@@ -36,6 +42,7 @@ function RootContent() {
         <Stack.Screen name="agent-health" options={{ headerShown: false }} />
         <Stack.Screen name="supabase-health" options={{ headerShown: false }} />
       </Stack>
+      <FeedbackToast />
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
     </NavigationThemeProvider>
   );

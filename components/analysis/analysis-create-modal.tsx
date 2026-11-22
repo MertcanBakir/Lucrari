@@ -1,3 +1,4 @@
+import { useReducedMotion } from '@/hooks/use-reduced-motion';
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
@@ -78,6 +79,7 @@ export function AnalysisCreateModal({
   onRefreshProviders,
   onClearStartError,
 }: AnalysisCreateModalProps) {
+  const reducedMotion = useReducedMotion();
   const { colorScheme } = useAppTheme();
   const theme = Colors[colorScheme === 'dark' ? 'dark' : 'light'];
   const [ticker, setTicker] = useState('');
@@ -206,7 +208,7 @@ export function AnalysisCreateModal({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+    <Modal visible={visible} animationType={reducedMotion ? 'none' : 'fade'} presentationStyle="pageSheet" onRequestClose={onClose}>
       <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}

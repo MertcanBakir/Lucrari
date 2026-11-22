@@ -8,7 +8,7 @@
 import React, { memo, useCallback } from 'react';
 import { StyleSheet, View, Text, Pressable, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
-import * as Haptics from 'expo-haptics';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import { useAppTheme } from '@/context/theme-context';
 import { Colors } from '@/constants/theme';
 import { IconSymbol } from '@/components/ui/icon-symbol';

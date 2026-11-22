@@ -1,3 +1,4 @@
+import { useReducedMotion } from '@/hooks/use-reduced-motion';
 /**
  * Position Detail Modal Component (Modal 5)
  * 
@@ -49,6 +50,7 @@ export function PositionDetailModal({
   onClose,
   onTrade,
 }: PositionDetailModalProps) {
+  const reducedMotion = useReducedMotion();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const theme = Colors[isDark ? 'dark' : 'light'];
@@ -110,7 +112,7 @@ export function PositionDetailModal({
   const isDailyPos = dailyPct !== null ? dailyPct >= 0 : true;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType={reducedMotion ? 'none' : 'fade'} onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
         <TouchableWithoutFeedback onPress={onClose}>
           <View style={styles.modalBackdropDismiss} />

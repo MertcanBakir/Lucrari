@@ -1,3 +1,4 @@
+import { setAccountTransitionHandlers } from '@/services/auth/account-transition';
 import {
   authenticateRegisteredAccount,
   ensureAnonymousSession,
@@ -23,6 +24,7 @@ const auth = {
 
 beforeEach(() => {
   jest.resetAllMocks();
+  setAccountTransitionHandlers();
   resetAuthLock();
   jest.mocked(getSupabaseClient).mockReturnValue({ auth } as unknown as ReturnType<typeof getSupabaseClient>);
   auth.getSession.mockResolvedValue({ data: { session }, error: null });
@@ -103,12 +105,12 @@ it('forwards auth transitions and unsubscribes even when registration fails', ()
   expect(() => onAuthStateChange(listener).unsubscribe()).not.toThrow();
 });
 
-it('asks for a fresh session even if sign-out throws during reset', async () => {
+it('preserves the session if sign-out fails during reset', async () => {
   auth.signOut.mockRejectedValueOnce(new Error('offline'));
-  await expect(resetAccountSession()).resolves.toMatchObject({ isNewUser: true, user });
+  await expect(resetAccountSession()).rejects.toThrow('offline');
   expect(auth.signOut).toHaveBeenCalledTimes(1);
   expect(auth.getSession).not.toHaveBeenCalled();
-  expect(auth.signInAnonymously).toHaveBeenCalledTimes(1);
+  expect(auth.signInAnonymously).not.toHaveBeenCalled();
 });
 
 it('redacts tokens and credentials from strings and structured errors', () => {
@@ -135,4 +137,32 @@ it('does not create a replacement guest when session lookup throws', async () =>
   // A later retry can recover the original identity.
   await expect(ensureAnonymousSession()).resolves.toMatchObject({ user, isNewUser: false, error: null });
   expect(auth.signInAnonymously).not.toHaveBeenCalled();
+});
+
+it('creates a fresh anonymous session only after successful sign-out', async () => {
+  auth.signOut.mockResolvedValueOnce({ error: null });
+  await expect(resetAccountSession()).resolves.toMatchObject({ isNewUser: true, user });
+  auth.signOut.mockResolvedValueOnce({ error: new Error('signout denied') });
+  await expect(resetAccountSession()).rejects.toThrow('signout denied');
+});
+
+it('blocks actual sign-in and sign-out when push-device release fails', async () => {
+  const release = jest.fn().mockRejectedValue(new Error('device release failed'));
+  setAccountTransitionHandlers(release);
+  await expect(authenticateRegisteredAccount('sign-in', 'a@example.test', 'password')).rejects.toThrow('Oturum açılamadı');
+  expect(auth.signInWithPassword).not.toHaveBeenCalled();
+  await expect(resetAccountSession()).rejects.toThrow('device release failed');
+  expect(auth.signOut).not.toHaveBeenCalled();
+  expect(auth.signInAnonymously).not.toHaveBeenCalled();
+  setAccountTransitionHandlers();
+});
+it('releases push registration before the actual registered-account request', async () => {
+  const release = jest.fn().mockResolvedValue(undefined);
+  setAccountTransitionHandlers(release);
+  auth.signInWithPassword.mockImplementation(async () => {
+    expect(release).toHaveBeenCalledTimes(1);
+    return { data: { session: { user: registeredUser } }, error: null };
+  });
+  await expect(authenticateRegisteredAccount('sign-in', 'a@example.test', 'password')).resolves.toBe('signed-in');
+  setAccountTransitionHandlers();
 });

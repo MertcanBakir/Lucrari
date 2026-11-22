@@ -15,7 +15,7 @@ import {
   ActivityIndicator,
   Platform,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -64,7 +64,7 @@ export function MonthlyCalendar({
   const handlePrevMonth = async () => {
     if (Platform.OS !== 'web') {
       try {
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        await Haptics.selectionAsync();
       } catch {
         // Fallback
       }
@@ -76,7 +76,7 @@ export function MonthlyCalendar({
   const handleNextMonth = async () => {
     if (Platform.OS !== 'web') {
       try {
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        await Haptics.selectionAsync();
       } catch {
         // Fallback
       }

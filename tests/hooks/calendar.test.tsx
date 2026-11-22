@@ -165,3 +165,15 @@ it('keeps a new month active when a superseded request fails and normalizes non-
   await act(() => hook.result.current.refetch());
   expect(hook.result.current.error).toBe('Takvim verileri yüklenemedi');
 });
+
+it('isolates calendar responses when notification timezone changes within the same month', async () => {
+  const data = { year: 2026, month: 10, eventsByDate: { '2026-11-01': [earnings] }, dayIndicators: {} };
+  loadCalendar.mockResolvedValue(data);
+  const hook = renderHook(({ zone }: { zone: string }) => useMonthlyCalendar(2026, 10, zone), { initialProps: { zone: 'Europe/Istanbul' } });
+  await waitFor(() => expect(hook.result.current.hasLoadedSuccessfully).toBe(true));
+  const pending = deferred<Awaited<ReturnType<typeof fetchMonthlyCalendarEvents>>>(); loadCalendar.mockReturnValueOnce(pending.promise);
+  hook.rerender({ zone: 'UTC' }); expect(hook.result.current.eventsByDate).toEqual({});
+  expect(loadCalendar).toHaveBeenLastCalledWith(2026, 10, expect.objectContaining({ timeZone: 'UTC' }));
+  await act(async () => pending.resolve({ ...data, eventsByDate: {} }));
+  expect(hook.result.current.eventsByDate).toEqual({});
+});

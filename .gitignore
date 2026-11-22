@@ -50,3 +50,7 @@ app-example
 # generated native folders
 /ios
 /android
+
+# Local push/build configuration
+/google-services.json
+/credentials.json

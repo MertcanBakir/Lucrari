@@ -1,3 +1,4 @@
+import { useReducedMotion } from '@/hooks/use-reduced-motion';
 import { useRef, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -7,6 +8,7 @@ import { useAppTheme } from '@/context/theme-context';
 import { authenticateRegisteredAccount } from '@/services/auth/auth-service';
 
 export function AnalysisAccountModal({ onClose }: { onClose: () => void }) {
+  const reducedMotion = useReducedMotion();
   const { colorScheme } = useAppTheme();
   const theme = Colors[colorScheme === 'dark' ? 'dark' : 'light'];
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
@@ -49,7 +51,7 @@ export function AnalysisAccountModal({ onClose }: { onClose: () => void }) {
   const canSubmit = Boolean(email.trim() && password && !isPending);
   const title = isSignUp ? 'Hesap Oluştur' : 'Giriş Yap';
   return (
-    <Modal visible animationType="slide" onRequestClose={close}>
+    <Modal visible animationType={reducedMotion ? 'none' : 'fade'} onRequestClose={close}>
       <SafeAreaView style={[styles.screen, { backgroundColor: theme.background }]}>
         <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>

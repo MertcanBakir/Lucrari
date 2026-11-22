@@ -1,3 +1,6 @@
+import { useLocalSearchParams } from 'expo-router';
+import { isValidUUID } from '@/utils/validation';
+import { isNotificationDate } from '@/utils/notification-routing';
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   StyleSheet,
@@ -9,12 +12,13 @@ import {
   ActivityIndicator,
   Image,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { MonthlyCalendar } from '@/components/calendar/monthly-calendar';
 import { DayEventsList } from '@/components/calendar/day-events-list';
 import { CalendarFilterChips } from '@/components/calendar/calendar-filter-chips';
 import { HomeWatchlistSection } from '@/components/watchlist/home-watchlist-section';
+import { useNotificationPreferences } from '@/hooks/use-notification-preferences';
 import { useMonthlyCalendar } from '@/hooks/use-monthly-calendar';
 import { usePortfolioCalendarOwnership } from '@/hooks/use-portfolio-calendar-ownership';
 import { useWatchlistMembership } from '@/hooks/use-watchlist-membership';
@@ -40,25 +44,43 @@ export default function HomeScreen() {
   const isDark = colorScheme === 'dark';
   const theme = Colors[isDark ? 'dark' : 'light'];
 
+  const params = useLocalSearchParams<{ date?: string; filter?: string; instrument?: string; event?: string; economicEvent?: string; notification?: string }>();
   const today = useMemo(() => new Date(), []);
   const [viewYear, setViewYear] = useState<number>(() => today.getFullYear());
   const [viewMonth, setViewMonth] = useState<number>(() => today.getMonth());
   const [selectedDate, setSelectedDate] = useState<Date>(() => today);
   const [activeFilter, setActiveFilter] = useState<CalendarFilter>('all');
 
+  const [focusedEvent, setFocusedEvent] = useState<{ type: 'earnings'; id: string; instrument: string } | { type: 'economic'; id: string } | null>(null);
+  useEffect(() => {
+    if (!isNotificationDate(params.date)) return;
+    setFocusedEvent(isValidUUID(params.economicEvent) ? { type: 'economic', id: params.economicEvent }
+      : isValidUUID(params.event) && isValidUUID(params.instrument) ? { type: 'earnings', id: params.event, instrument: params.instrument } : null);
+    const date = new Date(`${params.date}T12:00:00`);
+    setSelectedDate(date);
+    setViewYear(date.getFullYear());
+    setViewMonth(date.getMonth());
+    setActiveFilter(params.filter === 'portfolio' ? 'portfolio' : params.filter === 'watchlist' ? 'watchlist' : params.filter === 'economic' ? 'economic' : 'earnings');
+  }, [params.date, params.filter, params.notification, params.event, params.instrument, params.economicEvent]);
+
   // Apple Calendar Selection Mode state (iOS only)
   const [isExportMode, setIsExportMode] = useState<boolean>(false);
   const [selectedExportDates, setSelectedExportDates] = useState<Set<string>>(new Set());
   const [isExporting, setIsExporting] = useState<boolean>(false);
 
+  const isEconomicNotification = Boolean(params.notification && params.filter === 'economic' && isNotificationDate(params.date));
+  const notificationPreferences = useNotificationPreferences(isEconomicNotification);
   // Fetch monthly calendar events from Supabase with in-memory caching
   const {
     eventsByDate: rawEventsByDate,
-    isLoading: isCalendarLoading,
-    error: calendarError,
-    hasLoadedSuccessfully: hasCalendarLoadedSuccessfully,
+    isLoading: calendarLoading,
+    error: calendarLoadError,
+    hasLoadedSuccessfully: calendarHasLoaded,
     refetch: refetchCalendar,
-  } = useMonthlyCalendar(viewYear, viewMonth);
+  } = useMonthlyCalendar(viewYear, viewMonth, isEconomicNotification ? notificationPreferences.preferences?.timezone : undefined);
+  const isCalendarLoading = calendarLoading || (isEconomicNotification && notificationPreferences.loading);
+  const hasCalendarLoadedSuccessfully = calendarHasLoaded && (!isEconomicNotification || Boolean(notificationPreferences.preferences));
+  const calendarError = calendarLoadError || (isEconomicNotification ? notificationPreferences.error : null);
 
   // Fetch lightweight owned portfolio positions for "Portföyüm" filtering (strictly user-isolated)
   const {
@@ -105,8 +127,15 @@ export default function HomeScreen() {
 
   const selectedDayDateKey = useMemo(() => formatDateKey(selectedDate), [selectedDate]);
   const selectedDayEvents: CalendarEventViewModel[] = useMemo(() => {
-    return filteredEventsByDate[selectedDayDateKey] || [];
-  }, [filteredEventsByDate, selectedDayDateKey]);
+    const events = filteredEventsByDate[selectedDayDateKey] || [];
+    if (isEconomicNotification && !notificationPreferences.preferences) return [];
+    if (focusedEvent && selectedDayDateKey === params.date) {
+      return events.filter(event => focusedEvent.type === 'economic'
+        ? event.id === `economic-${focusedEvent.id}`
+        : event.id === `earnings-${focusedEvent.id}` && event.instrumentId === focusedEvent.instrument);
+    }
+    return events;
+  }, [filteredEventsByDate, selectedDayDateKey, focusedEvent, params.date, isEconomicNotification, notificationPreferences.preferences]);
 
   // Unambiguous pure view-state resolution
   const viewStateResolution = useMemo(() => {
@@ -146,10 +175,12 @@ export default function HomeScreen() {
   ]);
 
   const handleFilterChange = (newFilter: CalendarFilter) => {
+    setFocusedEvent(null);
     setActiveFilter(newFilter);
   };
 
   const handleMonthChange = (newYear: number, newMonth: number) => {
+    setFocusedEvent(null);
     setViewYear(newYear);
     setViewMonth(newMonth);
     // Clear selection when month changes
@@ -159,6 +190,7 @@ export default function HomeScreen() {
   };
 
   const handleSelectDate = (date: Date) => {
+    setFocusedEvent(null);
     setSelectedDate(date);
   };
 
@@ -527,7 +559,7 @@ export default function HomeScreen() {
             </View>
             <TouchableOpacity
               style={[styles.retryButton, { backgroundColor: theme.negative }]}
-              onPress={() => refetchCalendar()}
+              onPress={() => { void refetchCalendar(); if (isEconomicNotification) void notificationPreferences.reload(); }}
               activeOpacity={0.8}
             >
               <Text style={[styles.retryButtonText, { color: '#FFFFFF' }]}>Tekrar Dene</Text>
