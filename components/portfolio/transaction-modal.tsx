@@ -1,3 +1,5 @@
+import { useReducedMotion } from '@/hooks/use-reduced-motion';
+import { showSuccess } from '@/services/feedback/feedback-service';
 /** Original trade layout, using the simplified portfolio model. */
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
@@ -21,7 +23,7 @@ import Animated, {
   FadeInDown,
   FadeOutDown,
 } from 'react-native-reanimated';
-import * as Haptics from 'expo-haptics';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -76,6 +78,7 @@ export function TransactionModal({
   onClose,
   onSubmitTransaction,
 }: TransactionModalProps) {
+  const reducedMotion = useReducedMotion();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const theme = Colors[isDark ? 'dark' : 'light'];
@@ -410,9 +413,11 @@ export function TransactionModal({
           clientRequestId: intent.clientRequestId,
         });
         intentRef.current = null;
+        showSuccess('İşlem kaydedildi.');
         onClose();
       } catch (err) {
-        Alert.alert('İşlem Başarısız', formatPortfolioRpcError(err));
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('İşlem Başarısız', formatPortfolioRpcError(err));
       } finally {
         submissionPendingRef.current = false;
         setIsSubmitting(false);
@@ -424,7 +429,7 @@ export function TransactionModal({
     tradeCalc.isValid && !isInsufficientPositionForSell;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType={reducedMotion ? 'none' : 'fade'} onRequestClose={onClose}>
       <KeyboardAvoidingView
         style={styles.modalOverlay}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -502,11 +507,11 @@ export function TransactionModal({
               })}
             </View>
 
-            {/* Dynamic Body wrapped with unique key to guarantee native Reanimated entry & exit spring transitions */}
+            {/* Dynamic body transitions use the selected tab key and respect Reduce Motion */}
             <Animated.View
               key={`tab-content-${txType}`}
-              entering={FadeInDown.duration(320).springify().damping(18).stiffness(140)}
-              exiting={FadeOutDown.duration(160)}
+              entering={reducedMotion ? undefined : FadeInDown.duration(180)}
+              exiting={reducedMotion ? undefined : FadeOutDown.duration(120)}
               style={styles.tabAnimatedContainer}
             >
               {/* 2. SELL Mode: Empty State when 0 owned positions */}

@@ -1,3 +1,4 @@
+import { MotionView } from '@/components/feedback/motion-view';
 /**
  * Market Filter Chips Component
  * 
@@ -6,8 +7,8 @@
  */
 
 import React from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, ScrollView, Platform } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { StyleSheet, Text, TouchableOpacity, ScrollView, Platform } from 'react-native';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { ExtendedMarketType } from '@/types/database';
@@ -32,6 +33,7 @@ export function MarketFilterChips({ activeMarket, onSelectMarket }: MarketFilter
   const theme = Colors[isDark ? 'dark' : 'light'];
 
   const handlePress = async (marketId: ExtendedMarketType) => {
+    if (marketId === activeMarket) return;
     if (Platform.OS !== 'web') {
       try {
         await Haptics.selectionAsync();
@@ -43,7 +45,7 @@ export function MarketFilterChips({ activeMarket, onSelectMarket }: MarketFilter
   };
 
   return (
-    <View style={styles.marketTabsContainer}>
+    <MotionView motionKey={activeMarket} style={styles.marketTabsContainer}>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -76,7 +78,7 @@ export function MarketFilterChips({ activeMarket, onSelectMarket }: MarketFilter
           );
         })}
       </ScrollView>
-    </View>
+    </MotionView>
   );
 }
 

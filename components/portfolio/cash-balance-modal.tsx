@@ -1,3 +1,6 @@
+import { useReducedMotion } from '@/hooks/use-reduced-motion';
+import { haptics as Haptics } from '@/services/feedback/haptics';
+import { showSuccess } from '@/services/feedback/feedback-service';
 import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
@@ -35,6 +38,7 @@ export function CashBalanceModal({
   onClose,
   onSave,
 }: CashBalanceModalProps) {
+  const reducedMotion = useReducedMotion();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const theme = Colors[isDark ? 'dark' : 'light'];
@@ -70,12 +74,10 @@ export function CashBalanceModal({
       inFlight.current = true;
       setIsSubmitting(true);
       await onSave(tryParse.value, usdParse.value);
-      Alert.alert(
-        'Nakit Güncellendi',
-        'Nakit tutarınız portföy toplamına dahil edildi.'
-      );
+      showSuccess('Nakit güncellendi.');
       onClose();
     } catch (err) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('Hata', formatPortfolioRpcError(err));
     } finally {
       inFlight.current = false;
@@ -84,7 +86,7 @@ export function CashBalanceModal({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={() => { if (!isSubmitting) onClose(); }}>
+    <Modal visible={visible} transparent animationType={reducedMotion ? 'none' : 'fade'} onRequestClose={() => { if (!isSubmitting) onClose(); }}>
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
         <View style={styles.modalOverlay}>
           <KeyboardAvoidingView

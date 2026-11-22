@@ -1,3 +1,4 @@
+import { MotionView } from '@/components/feedback/motion-view';
 /**
  * Lucrari — Calendar Filter Chips Component
  * 
@@ -14,7 +15,7 @@ import {
   ScrollView,
   Platform,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -54,7 +55,7 @@ export function CalendarFilterChips({
   };
 
   return (
-    <View style={styles.container}>
+    <MotionView motionKey={activeFilter} style={styles.container}>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -162,7 +163,7 @@ export function CalendarFilterChips({
           );
         })}
       </ScrollView>
-    </View>
+    </MotionView>
   );
 }
 

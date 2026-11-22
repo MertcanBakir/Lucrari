@@ -1,3 +1,5 @@
+import { LoadingSkeleton } from '@/components/feedback/loading-skeleton';
+import { LayoutMotionView } from '@/components/feedback/motion-view';
 /**
  * Lucrari — Home Watchlist Section Component
  * 
@@ -17,7 +19,7 @@ import {
   ActivityIndicator,
   Platform,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -134,12 +136,7 @@ export function HomeWatchlistSection() {
     <View style={styles.wrapper}>
       {/* 1. Initial / Auth Loading Spinner */}
       {viewState.showInitialSpinner && (
-        <View style={[styles.loadingCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-          <ActivityIndicator size="small" color={theme.tint} />
-          <Text style={[styles.loadingCardText, { color: theme.textSecondary }]}>
-            İzleme listesi yükleniyor...
-          </Text>
-        </View>
+        <LoadingSkeleton label="İzleme listesi yükleniyor..." />
       )}
 
       {/* 2. Initial Error / Auth Failed Banner */}
@@ -274,7 +271,7 @@ export function HomeWatchlistSection() {
           )}
 
           {/* Items List */}
-          <View style={styles.rowsList}>
+          <LayoutMotionView style={styles.rowsList}>
             {items.map((item) => (
               <WatchlistRow
                 key={item.watchlistId || item.instrumentId}
@@ -295,7 +292,7 @@ export function HomeWatchlistSection() {
                 }}
               />
             ))}
-          </View>
+          </LayoutMotionView>
 
           {/* Expanded View Pagination Controls (Shown when expanded and totalCount > pageSize) */}
           {isExpanded && totalCount > pageSize && (
@@ -410,18 +407,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 16,
     gap: 12,
-  },
-  loadingCard: {
-    borderRadius: 18,
-    borderWidth: 1,
-    padding: 24,
-    alignItems: 'center',
-    gap: 8,
-    marginVertical: 8,
-  },
-  loadingCardText: {
-    fontSize: 13,
-    fontWeight: '500',
   },
   errorCard: {
     flexDirection: 'row',

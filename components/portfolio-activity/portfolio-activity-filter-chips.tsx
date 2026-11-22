@@ -1,3 +1,4 @@
+import { MotionView } from '@/components/feedback/motion-view';
 /**
  * Lucrari — Portfolio Activity Filter Chips
  * 
@@ -5,8 +6,8 @@
  */
 
 import React, { memo, useCallback } from 'react';
-import { StyleSheet, View, Text, ScrollView, Pressable, Platform } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { StyleSheet, Text, ScrollView, Pressable, Platform } from 'react-native';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import { useAppTheme } from '@/context/theme-context';
 import { Colors } from '@/constants/theme';
 import {
@@ -46,7 +47,7 @@ export const PortfolioActivityFilterChips = memo(function PortfolioActivityFilte
   );
 
   return (
-    <View style={styles.container}>
+    <MotionView motionKey={activeFilter} style={styles.container}>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -94,7 +95,7 @@ export const PortfolioActivityFilterChips = memo(function PortfolioActivityFilte
           );
         })}
       </ScrollView>
-    </View>
+    </MotionView>
   );
 });
 

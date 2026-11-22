@@ -17,9 +17,11 @@ jest.mock('@/context/auth-context', () => ({
 jest.mock('@/context/theme-context', () => ({
   useAppTheme: jest.fn(), ThemeProvider: ({ children }: React.PropsWithChildren) => children,
 }));
+jest.mock('@/hooks/use-notifications', () => ({ useNotificationLifecycle: jest.fn() }));
 jest.mock('expo-splash-screen', () => ({
-  preventAutoHideAsync: jest.fn().mockResolvedValue(undefined), hideAsync: jest.fn().mockResolvedValue(undefined),
+  preventAutoHideAsync: jest.fn().mockResolvedValue(undefined), hideAsync: jest.fn().mockResolvedValue(undefined), setOptions: jest.fn(),
 }));
+const mockPush = jest.fn();
 jest.mock('expo-router', () => {
   const { Text } = jest.requireActual<typeof import('react-native')>('react-native');
   const Stack = Object.assign(({ children }: React.PropsWithChildren) => children, {
@@ -29,7 +31,7 @@ jest.mock('expo-router', () => {
     Screen: ({ options }: { options: { tabBarLabel: string; tabBarIcon: (props: { color: string; focused: boolean }) => React.ReactNode } }) =>
       <><Text>{options.tabBarLabel}</Text>{options.tabBarIcon({ color: 'black', focused: false })}{options.tabBarIcon({ color: 'black', focused: true })}</>,
   });
-  return { Stack, Tabs, Link: ({ children, href }: React.PropsWithChildren<{ href: string }>) =>
+  return { Stack, Tabs, useRouter: () => ({ push: mockPush }), Link: ({ children, href }: React.PropsWithChildren<{ href: string }>) =>
     <Text accessibilityRole="link" accessibilityLabel={href}>{children}</Text> };
 });
 jest.mock('@/components/health/analysis-health-menu-item', () => ({ AnalysisHealthMenuItem: () => null }));
@@ -39,6 +41,7 @@ jest.mock('@/components/system-health/system-health-menu-item', () => ({ SystemH
 jest.mock('expo-application', () => ({ __esModule: true, nativeApplicationVersion: null, nativeBuildVersion: null }));
 jest.mock('expo-constants', () => ({ expoConfig: { version: 'test-version' } }));
 
+const initialSplashOptions = jest.mocked(SplashScreen.setOptions).mock.calls[0]?.[0];
 const auth = jest.mocked(useAuth);
 const theme = jest.mocked(useAppTheme);
 const setThemeMode = jest.fn();
@@ -158,4 +161,14 @@ it('registers the dark theme tab bar on Android', () => {
   theme.mockReturnValue({ colorScheme: 'dark' } as ReturnType<typeof useAppTheme>);
   render(<TabLayout />);
   expect(screen.getByText('Yatırımlarım')).toBeOnTheScreen();
+});
+
+it('opens notification preferences from the menu', () => {
+  render(<MenuScreen />);
+  fireEvent.press(screen.getByLabelText('Bildirim ayarları'));
+  expect(mockPush).toHaveBeenCalledWith('/notification-settings');
+});
+
+it('configures a short fade for the native splash transition', () => {
+  expect(initialSplashOptions).toEqual({ duration: 300, fade: true });
 });

@@ -749,6 +749,12 @@ export interface Database {
       [_ in never]: never;
     };
     Functions: {
+      register_push_device: { Args: { p_installation_id: string; p_project_id: string; p_environment: string; p_token: string }; Returns: string };
+      unregister_push_device: { Args: { p_device_id: string }; Returns: undefined };
+      get_notification_preferences_v2: { Args: Record<PropertyKey, never>; Returns: Json };
+      set_notification_preferences_v2: { Args: { p_timezone: string; p_earnings_morning: boolean; p_earnings_midday: boolean; p_daily_portfolio: boolean; p_watchlist_earnings: boolean; p_economic_reminders: boolean; p_earnings_today: boolean; p_earnings_tomorrow: boolean; p_countries: string[]; p_min_importance: number }; Returns: undefined };
+      get_notification_preferences: { Args: Record<PropertyKey, never>; Returns: Json };
+      set_notification_preferences: { Args: { p_timezone: string; p_earnings_morning: boolean; p_macro_morning: boolean; p_earnings_midday: boolean; p_daily_portfolio: boolean; p_countries: string[]; p_min_importance: number }; Returns: undefined };
       refresh_portfolio_chart: { Args: { p_portfolio_id: string }; Returns: Json };
       get_portfolio_chart: {
         Args: { p_portfolio_id: string; p_range: string; p_market: string; p_currency: string; p_metric: string };

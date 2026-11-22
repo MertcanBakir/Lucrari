@@ -1,3 +1,4 @@
+import { useReducedMotion } from '@/hooks/use-reduced-motion';
 /**
  * Lucrari — Portfolio Activity Detail Modal
  * 
@@ -15,7 +16,7 @@ import {
   ScrollView,
   Platform,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import { useAppTheme } from '@/context/theme-context';
 import { Colors } from '@/constants/theme';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -39,6 +40,7 @@ export const PortfolioActivityDetailModal = memo(function PortfolioActivityDetai
   item,
   onClose,
 }: PortfolioActivityDetailModalProps) {
+  const reducedMotion = useReducedMotion();
   const { colorScheme } = useAppTheme();
   const isDark = colorScheme === 'dark';
   const theme = Colors[isDark ? 'dark' : 'light'];
@@ -78,7 +80,7 @@ export const PortfolioActivityDetailModal = memo(function PortfolioActivityDetai
     <Modal
       visible={visible}
       transparent
-      animationType="fade"
+      animationType={reducedMotion ? 'none' : 'fade'}
       onRequestClose={handleClose}
     >
       <View style={styles.backdrop}>

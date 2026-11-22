@@ -308,3 +308,32 @@ it('groups events on the same day, skips incomplete rows and forwards abort sign
     clearCalendarCache();
   }
 });
+
+it('groups notification macro events in the preference timezone across UTC month boundaries and isolates caches', async () => {
+  clearCalendarCache();
+  const client = getSupabaseClient();
+  const bounds: unknown[][] = [];
+  const from = jest.spyOn(client, 'from').mockImplementation(table => {
+    const rows = table === 'economic_events' ? [
+      { id: 'start', name: 'Gece açıklaması', scheduled_at: '2026-10-31T22:30:00Z', country: 'TR' },
+      { id: 'end', name: 'Son gün', scheduled_at: '2026-11-30T22:30:00Z', country: 'US' },
+    ] : [];
+    const builder = {
+      select: jest.fn().mockReturnThis(), eq: jest.fn().mockReturnThis(),
+      gte: (field: string, value: string) => { bounds.push([field, value]); return builder; },
+      lte: jest.fn().mockReturnThis(), order: () => Promise.resolve({ data: rows, error: null }),
+    };
+    return builder as unknown as ReturnType<typeof client.from>;
+  });
+  try {
+    const istanbul = await fetchMonthlyCalendarEvents(2026, 10, { timeZone: 'Europe/Istanbul' });
+    expect(istanbul.eventsByDate['2026-11-01'][0]).toMatchObject({ title: 'Gece açıklaması', timeLabel: '01:30' });
+    expect(istanbul.eventsByDate['2026-12-01']).toBeUndefined();
+    const utc = await fetchMonthlyCalendarEvents(2026, 10, { timeZone: 'UTC' });
+    expect(utc.eventsByDate['2026-10-31']).toBeUndefined();
+    expect(utc.eventsByDate['2026-11-30'][0].timeLabel).toBe('22:30');
+    expect(await fetchMonthlyCalendarEvents(2026, 10, { timeZone: 'Europe/Istanbul' })).toBe(istanbul);
+    expect(bounds).toContainEqual(['scheduled_at', '2026-10-31T00:00:00.000Z']);
+    expect(from).toHaveBeenCalledTimes(4);
+  } finally { from.mockRestore(); clearCalendarCache(); }
+});

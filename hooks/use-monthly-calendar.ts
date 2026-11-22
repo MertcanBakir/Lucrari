@@ -34,8 +34,8 @@ export interface UseMonthlyCalendarResult {
   getEventsForDate: (date: Date) => CalendarEventItem[];
 }
 
-export function useMonthlyCalendar(year: number, month: number): UseMonthlyCalendarResult {
-  const currentMonthKey = `${year}-${month}`;
+export function useMonthlyCalendar(year: number, month: number, timeZone?: string): UseMonthlyCalendarResult {
+  const currentMonthKey = `${year}-${month}${timeZone ? `/${timeZone}` : ''}`;
   const currentMonthKeyRef = useRef<string>(currentMonthKey);
   currentMonthKeyRef.current = currentMonthKey;
 
@@ -70,7 +70,7 @@ export function useMonthlyCalendar(year: number, month: number): UseMonthlyCalen
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    const targetMonthKey = `${year}-${month}`;
+    const targetMonthKey = currentMonthKey;
     log.debug('calendar.month.selected', {
       message: 'Calendar month selected.',
       context: { year, month }
@@ -86,6 +86,7 @@ export function useMonthlyCalendar(year: number, month: number): UseMonthlyCalen
     try {
       const result = await fetchMonthlyCalendarEvents(year, month, {
         forceRefresh,
+        ...(timeZone ? { timeZone } : {}),
         signal: controller.signal,
       });
 
@@ -129,7 +130,7 @@ export function useMonthlyCalendar(year: number, month: number): UseMonthlyCalen
         }));
       }
     }
-  }, [year, month]);
+  }, [year, month, currentMonthKey, timeZone]);
 
   useEffect(() => {
     loadData(false);
@@ -151,8 +152,9 @@ export function useMonthlyCalendar(year: number, month: number): UseMonthlyCalen
       rawState,
       currentYear: year,
       currentMonth: month,
+      scopeKey: currentMonthKey,
     });
-  }, [rawState, year, month]);
+  }, [rawState, year, month, currentMonthKey]);
 
   const getEventsForDate = useCallback(
     (date: Date): CalendarEventItem[] => {

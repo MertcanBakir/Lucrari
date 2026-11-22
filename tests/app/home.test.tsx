@@ -1,3 +1,5 @@
+import { useNotificationPreferences } from '@/hooks/use-notification-preferences';
+import { useLocalSearchParams } from 'expo-router';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Alert } from 'react-native';
 import HomeScreen from '@/app/(tabs)/index';
@@ -8,6 +10,8 @@ import { exportEventsToAppleCalendar, isAppleCalendarSupported, openAppleCalenda
 import { formatDateKey } from '@/utils/calendar-utils';
 import { assetId, earnings, economic } from '../ui/fixtures';
 
+jest.mock('@/hooks/use-notification-preferences', () => ({ useNotificationPreferences: jest.fn() }));
+jest.mock('expo-router', () => ({ useLocalSearchParams: jest.fn(() => ({})) }));
 jest.mock('@/hooks/use-monthly-calendar', () => ({ useMonthlyCalendar: jest.fn() }));
 jest.mock('@/hooks/use-portfolio-calendar-ownership', () => ({ usePortfolioCalendarOwnership: jest.fn() }));
 jest.mock('@/hooks/use-watchlist-membership', () => ({ useWatchlistMembership: jest.fn() }));
@@ -64,6 +68,8 @@ const choose = async (label: string) => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(useNotificationPreferences).mockReturnValue({ preferences: { timezone: 'Europe/Istanbul' }, loading: false, error: null, reload: jest.fn() } as unknown as ReturnType<typeof useNotificationPreferences>);
+  jest.mocked(useLocalSearchParams).mockReturnValue({});
   jest.mocked(useMonthlyCalendar).mockReturnValue(calendar);
   jest.mocked(usePortfolioCalendarOwnership).mockReturnValue(ownership);
   jest.mocked(useWatchlistMembership).mockReturnValue(watchlist);
@@ -176,4 +182,64 @@ it('refreshes only the active private filter when its data becomes stale', async
   fireEvent.press(screen.getByText('Yenile'));
   expect(watchlist.refetch).toHaveBeenCalledTimes(1);
   expect(calendar.refetch).not.toHaveBeenCalled();
+});
+
+it('opens the notification date and loads full portfolio earnings or macro data rather than capped payload IDs', async () => {
+  jest.mocked(useLocalSearchParams).mockReturnValue({ date: key, filter: 'portfolio', notification: 'one' });
+  const view = render(<HomeScreen />);
+  await waitFor(() => expect(screen.queryByText('TÜFE')).toBeNull());
+  expect(screen.getByText('THYAO')).toBeOnTheScreen();
+  jest.mocked(useLocalSearchParams).mockReturnValue({ date: key, filter: 'economic', notification: 'two' });
+  view.rerender(<HomeScreen />);
+  await waitFor(() => expect(screen.getByText('TÜFE')).toBeOnTheScreen());
+  expect(screen.queryByText('THYAO')).toBeNull();
+});
+it('opens the exact company earnings event and handles missing events', async () => {
+  const eventId = '11111111-1111-4111-8111-111111111111';
+  jest.mocked(useMonthlyCalendar).mockReturnValue({ ...calendar, eventsByDate: { [key]: [{ ...earnings, id: `earnings-${eventId}`, dateKey: key }, { ...economic, dateKey: key }] } });
+  jest.mocked(useLocalSearchParams).mockReturnValue({ date: key, filter: 'earnings', instrument: assetId, event: eventId });
+  const view = render(<HomeScreen />);
+  await waitFor(() => expect(screen.getByText('THYAO')).toBeOnTheScreen());
+  jest.mocked(useLocalSearchParams).mockReturnValue({ date: key, filter: 'earnings', instrument: assetId, event: '99999999-9999-4999-8999-999999999999' });
+  view.rerender(<HomeScreen />);
+  await waitFor(() => expect(screen.queryByText('THYAO')).toBeNull());
+  await choose('Tümü');
+  expect(screen.getByText('THYAO')).toBeOnTheScreen();
+  expect(screen.getByText('TÜFE')).toBeOnTheScreen();
+});
+
+it('uses notification timezone and retries a failed preference lookup without showing a local-day substitute', async () => {
+  const reload = jest.fn();
+  jest.mocked(useNotificationPreferences).mockReturnValue({ preferences: null, loading: false, error: 'Saat dilimi yüklenemedi', reload } as unknown as ReturnType<typeof useNotificationPreferences>);
+  jest.mocked(useLocalSearchParams).mockReturnValue({ date: key, filter: 'economic', notification: 'notice' });
+  const view = render(<HomeScreen />);
+  expect(screen.queryByText('TÜFE')).toBeNull();
+  fireEvent.press(screen.getByText('Tekrar Dene'));
+  expect(reload).toHaveBeenCalled();
+  jest.mocked(useNotificationPreferences).mockReturnValue({ preferences: { timezone: 'UTC' }, loading: false, error: null, reload } as unknown as ReturnType<typeof useNotificationPreferences>);
+  view.rerender(<HomeScreen />);
+  expect(useMonthlyCalendar).toHaveBeenLastCalledWith(today.getFullYear(), today.getMonth(), 'UTC');
+  await waitFor(() => expect(screen.getByText('TÜFE')).toBeOnTheScreen());
+});
+
+it('opens a watchlist notification without requiring a portfolio and loads the full watchlist day', async () => {
+  jest.mocked(useLocalSearchParams).mockReturnValue({ date: key, filter: 'watchlist', notification: 'watchlist-notice' });
+  jest.mocked(usePortfolioCalendarOwnership).mockReturnValue({ ...ownership, ownedPositions: new Map() });
+  jest.mocked(useMonthlyCalendar).mockReturnValue({ ...calendar, eventsByDate: { [key]: [
+    { ...earnings, dateKey: key }, { ...earnings, id: 'other-earnings', instrumentId: '22222222-2222-4222-8222-222222222222', title: 'BIMAS', dateKey: key },
+  ] } });
+  render(<HomeScreen />);
+  await waitFor(() => expect(screen.getByLabelText('İzleme Listesi filtresini seç')).toHaveProp('accessibilityState', expect.objectContaining({ selected: true })));
+  expect(screen.getByText('THYAO')).toBeOnTheScreen(); expect(screen.queryByText('BIMAS')).toBeNull();
+});
+it('focuses the reminded economic event and lets the user return to the full calendar', async () => {
+  const eventId = '11111111-1111-4111-8111-111111111111';
+  jest.mocked(useLocalSearchParams).mockReturnValue({ date: key, filter: 'economic', economicEvent: eventId, notification: 'economic-notice' });
+  jest.mocked(useMonthlyCalendar).mockReturnValue({ ...calendar, eventsByDate: { [key]: [
+    { ...economic, id: `economic-${eventId}`, dateKey: key }, { ...economic, id: 'economic-other', title: 'PMI', dateKey: key },
+  ] } });
+  render(<HomeScreen />);
+  await waitFor(() => expect(screen.getByText('TÜFE')).toBeOnTheScreen());
+  expect(screen.queryByText('PMI')).toBeNull();
+  await choose('Tümü'); expect(screen.getByText('PMI')).toBeOnTheScreen();
 });

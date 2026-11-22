@@ -1,3 +1,4 @@
+import { useReducedMotion } from '@/hooks/use-reduced-motion';
 /**
  * Lucrari — Watchlist Search & Add Modal Component
  * 
@@ -31,7 +32,7 @@ import {
   FlatList,
   ScrollView,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -82,6 +83,7 @@ export function WatchlistSearchModal({
   onToggleWatchlist,
   onLoadMembership,
 }: WatchlistSearchModalProps) {
+  const reducedMotion = useReducedMotion();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const theme = Colors[isDark ? 'dark' : 'light'];
@@ -270,7 +272,7 @@ export function WatchlistSearchModal({
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      animationType={reducedMotion ? 'none' : 'fade'}
       transparent
       onRequestClose={handleClose}
     >

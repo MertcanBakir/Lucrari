@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feedback/loading-skeleton';
 /** Investment tracking with moving average cost and optional manual cash. */
 
 import React, { useState, useMemo, useCallback } from 'react';
@@ -7,11 +8,10 @@ import {
   Text,
   FlatList,
   RefreshControl,
-  ActivityIndicator,
   Platform,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
-import * as Haptics from 'expo-haptics';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/context/auth-context';
 import { useAppTheme } from '@/context/theme-context';
@@ -103,7 +103,7 @@ function InvestmentsSessionScreen() {
   const handleToggleCurrency = useCallback(async () => {
     if (Platform.OS !== 'web') {
       try {
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        await Haptics.selectionAsync();
       } catch {
         // Fallback
       }
@@ -135,13 +135,6 @@ function InvestmentsSessionScreen() {
   }, []);
 
   const handleOpenPositionDetails = useCallback((position: PortfolioPosition) => {
-    if (Platform.OS !== 'web') {
-      try {
-        Haptics.selectionAsync();
-      } catch {
-        // Fallback
-      }
-    }
     setSelectedPosition(position);
   }, []);
 
@@ -217,12 +210,7 @@ function InvestmentsSessionScreen() {
 
         {/* Initial Loading Spinner */}
         {isInitialLoading && (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={theme.tint} />
-            <Text style={[styles.loadingText, { color: theme.textSecondary }]}>
-              Portföy verileri yükleniyor...
-            </Text>
-          </View>
+          <LoadingSkeleton variant="portfolio" label="Portföy verileri yükleniyor..." />
         )}
 
         {/* Initial Load Error View */}
@@ -413,16 +401,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingTop: Platform.OS === 'ios' ? 56 : 36,
     paddingBottom: 100,
-  },
-  loadingContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-    marginVertical: 40,
-  },
-  loadingText: {
-    fontSize: 13,
-    fontWeight: '600',
   },
   holdingsHeaderRow: {
     flexDirection: 'row',

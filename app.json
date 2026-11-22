@@ -23,7 +23,8 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.merticon.lucrari"
     },
     "web": {
       "output": "static",
@@ -34,17 +35,23 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 220,
+          "image": "./assets/images/Lucrari_logo_light.png",
+          "imageWidth": 180,
           "resizeMode": "contain",
           "backgroundColor": "#F8F6F7",
           "dark": {
-            "image": "./assets/images/splash-icon.png",
+            "image": "./assets/images/Lucrari_logo_dark.png",
             "backgroundColor": "#171416"
           }
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "default"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

@@ -51,6 +51,7 @@ it('shows investment loading, initial error, and stale cached positions at the r
   const hook = jest.mocked(usePortfolio).mockReturnValue({ ...ready, isLoading: true, lastFetchedTimestamp: 0 });
   const view = render(<InvestmentsScreen />);
   expect(screen.getByText(/Portföy verileri yükleniyor/)).toBeOnTheScreen();
+  expect(screen.getByRole('progressbar', { name: 'Portföy verileri yükleniyor...' })).toBeOnTheScreen();
   hook.mockReturnValue({ ...ready, lastFetchedTimestamp: 0, error: 'Bağlantı yok' });
   view.rerender(<InvestmentsScreen />);
   expect(screen.getByText('Bağlantı yok')).toBeOnTheScreen();

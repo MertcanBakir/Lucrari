@@ -11,6 +11,7 @@
 
 import type { Session, User, AuthChangeEvent } from '@supabase/supabase-js';
 import { getSupabaseClient } from '@/services/supabase/client';
+import { withAccountTransition } from './account-transition';
 import { createScopedLogger } from '@/utils/logger';
 
 const log = createScopedLogger('AuthService');
@@ -33,9 +34,9 @@ export async function authenticateRegisteredAccount(
   const credentials = { email: email.trim(), password };
   try {
     const { auth } = getSupabaseClient();
-    const { data, error } = mode === 'sign-up'
-      ? await auth.signUp(credentials)
-      : await auth.signInWithPassword(credentials);
+    const { data, error } = await withAccountTransition(() => mode === 'sign-up'
+      ? auth.signUp(credentials)
+      : auth.signInWithPassword(credentials));
 
     if (!error && data.session?.user && data.session.user.is_anonymous !== true) {
       return 'signed-in';
@@ -275,12 +276,16 @@ export async function resetAccountSession(): Promise<AuthBootstrapResult> {
     log.info('auth.reset.started', {
       message: 'Auth reset started.'
     });
-    await client.auth.signOut();
+    await withAccountTransition(async () => {
+      const { error } = await client.auth.signOut();
+      if (error) throw error;
+    });
   } catch (err) {
     log.warn('auth.signout.failed', {
       message: 'Auth signout failed.',
       error: sanitizeAuthError(err)
     });
+    throw err;
   }
 
   return await ensureAnonymousSession({ forceNew: true });

@@ -7,7 +7,7 @@
 
 import React from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, Platform } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';

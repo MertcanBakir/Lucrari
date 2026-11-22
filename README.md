@@ -4,7 +4,8 @@ Lucrari, bireysel yatırımcılar için geliştirilmiş, BIST ve küresel piyasa
 
 ## 1. Proje Özeti
 
-- **Framework**: Expo SDK 54, React Native 0.76+, TypeScript
+- **Framework**: Expo SDK 54, React Native 0.81.5, TypeScript
+- **Bildirimler**: FinBot zamanlaması, Expo push, Supabase RPC cihaz kaydı ve kullanıcı tercihleri
 - **Yönlendirme**: Expo Router (Dosya tabanlı yönlendirme)
 - **Veritabanı ve Kimlik Doğrulama**: Supabase (PostgreSQL, Row Level Security, RLS)
 - **Tasarım Dili**: Özel tasarım sistemi, açık/koyu tema desteği, glassmorphism ve mikro-animasyonlar
@@ -42,6 +43,19 @@ Lucrari, bireysel yatırımcılar için geliştirilmiş, BIST ve küresel piyasa
    ```bash
    npm start
    ```
+
+
+### Bilgisayardan bağımsız iOS preview build
+
+`development` profili Metro geliştirme sunucusuna bağlanır. `preview` profili JavaScript paketini uygulamanın içine alır; açılmak için Metro, tunnel veya açık bir bilgisayar gerektirmez. Finansal veriler, oturum ve push bildirimleri için internet ve canlı Supabase/FinBot servisleri gerekir.
+
+```bash
+npx --yes eas-cli@27.4.1 build --platform ios --profile preview
+```
+
+Build bağlantısı/QR koduyla kayıtlı gerçek iPhone'a kurun. Anonim oturumu korumak için mevcut uygulamayı silmeden güncelleyin. Native açılış ekranını uygulamayı tamamen kapatıp yeniden açarak kontrol edin.
+
+EAS bulut build ortamında `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` veya `EXPO_PUBLIC_SUPABASE_ANON_KEY` ve analiz özelliği için `EXPO_PUBLIC_ANALYSIS_API_URL` tanımlı olmalıdır. Git tarafından dışlanan yerel `.env` dosyalarına bulut build'in erişeceğini varsaymayın. Yalnız mobil uygulamaya dağıtılması güvenli public/publishable değerler kullanılmalıdır; servis anahtarı veya veritabanı bağlantısı eklemeyin.
 
 ---
 
@@ -351,3 +365,41 @@ Yatırımlar özetindeki grafik ikonu `app/portfolio-chart.tsx` ekranını açar
 - `refresh_portfolio_chart`, ekran açıldığında veya yenilendiğinde yalnız kullanıcının bugünkü snapshot'ını günceller. Alış/satış ve nakit değişiklikleri grafik önbelleğini geçersiz kılar. Grafik sorguları kullanıcı, dönem, piyasa, para birimi ve göstergeye göre ayrılır; filtre/oturum değişiminde eski sonuç gösterilmez.
 - `private.capture_portfolio_chart_snapshots()` ve Supabase `pg_cron` işi `lucrari-portfolio-chart-snapshots` her saatin 55. dakikasında uygulama kapalıyken de kayıt üretir. İstanbul takvim günü içinde aynı satır güncellenir; önceki günler değiştirilmez. Tek bir portföyün fiyat hatası diğer portföyleri durdurmaz. İşin sonucu ve uyarıları Supabase Cron kayıtlarından izlenir.
 - Geçişler: `20261119001000_portfolio_chart.sql` ve değerleme/grafik kurunu eşitleyen `20261119002000_consistent_snapshot_chart_fx.sql`. SQL kabul testi: `supabase/tests/portfolio_chart_test.sql`; tarihsel kur, piyasa filtreleri, gerçekleşmiş kâr, eski eksik veriler, örnekleme sınırı, kullanıcı izolasyonu ve sıfırlama zincirini test verilerini geri alarak doğrular.
+
+## Push Bildirimleri
+
+FinBot/AWS bildirimleri zamanlar ve Expo Push Service üzerinden gönderir. Lucrari yalnız mevcut Supabase oturumuyla `register_push_device`, `unregister_push_device`, `get_notification_preferences_v2` ve `set_notification_preferences_v2` RPC'lerini çağırır. Mobil uygulama `notifications` şemasındaki tablolara erişmez; servis anahtarı içermez. Bu RPC'lerin FinBot bildirim migration'ıyla hedef Supabase ortamına kurulmuş olması gerekir.
+
+- EAS proje kimliği `b44b6f90-e455-41e3-964b-1c3e7f9f4323`; mevcut worker için kayıt ortamı tüm build profillerinde `production` kullanılır. Development/preview cihazları da gerçek bildirim alır.
+- Gerçek iOS/Android cihaz ve yeni development, preview veya production build gerekir. Expo Go ve web'de cihaz kaydı yapılmaz. Native paket/plugin değişikliği nedeniyle eski yüklü build yeterli değildir.
+- EAS tarafında iOS APNs anahtarı ve Android FCM v1 gönderim bilgileri yapılandırılmalıdır. Android için ilgili Firebase uygulamasının `google-services.json` dosyası `GOOGLE_SERVICES_JSON` adlı EAS file environment variable ile sağlanmalıdır. `app.config.ts`, verilen build dosyası yolunu `expo.android.googleServicesFile` alanına bağlar. Yerelde aynı değişken dosya yolu olarak kullanılabilir. Bu dosya Firebase istemci yapılandırmasıdır; FCM servis hesabı anahtarı değildir. Repoda bu dosya veya gönderim kimlik bilgileri bulunmaz. iOS bundle kimliği `com.merticon.Lucrari`, Android paket adı `com.merticon.lucrari` olarak yapılandırılmıştır.
+- Oturum hazır olunca ilk sistem izin isteği yapılır. Ret sonrası otomatik tekrar sorulmaz; Menü → Bildirimler üzerinden cihaz kaydı tekrar denenebilir veya telefon ayarları açılabilir. Token değişiminde, oturum yenilendiğinde ve uygulama yeniden öne geldiğinde kayıt güncellenir. Token dinleyicisinin verdiği native token doğrudan Expo token isteğinde kullanılır; aynı token için tekrar gelen olaylar kayıt döngüsü başlatmaz. Ağ hatası ana uygulamayı engellemez; tekrar deneme ayarlardan veya sonraki öne gelme/oturum olayından yapılır.
+- Kurulum UUID'si, izin isteği işareti ve RPC'nin döndürdüğü kullanıcıya bağlı cihaz kimliği AsyncStorage'da saklanır. Push token kalıcı saklanmaz ve loglanmaz. Cihazda uygulama verilerinin silinmesi kurulum kimliğini yeniler.
+- Hesap geçişi ve `resetAccountSession` ile çıkıştan önce cihaz kaydı kaldırılır; devam eden kayıt işlemleri beklenir veya iptal edilir. Kaldırma başarısızsa hesap geçişi yapılmaz. Yeni çıkış/hesap değiştirme giriş noktaları `withAccountTransition` kullanmalıdır. Menüdeki yatırım sıfırlama mevcut oturumu korur; bildirim kaydını kaldırmaz.
+- Menü → Bildirimler yedi bağımsız bildirimi iki kategori kartında yönetir: **Portföy bildirimleri** (`earnings_morning`, `earnings_midday`, `daily_portfolio`, `watchlist_earnings`) ve **Genel bildirimler** (`economic_reminders`, `earnings_today`, `earnings_tomorrow`). TR/US ülkeleri ve dahil edilen minimum önem eşiği (1–3) ayrıca korunur. Saat dilimi mobil arayüzde gösterilmez veya düzenlenmez; diğer tercihleri kaydederken backend’den gelen saat dilimi korunur. Tercihler varsayılan değer tahmin edilmeden RPC'den okunur. Backend programı: portföy özeti 10.00, genel bugünkü bilanço özeti 10.15, şirket bazlı hatırlatmalar 13.30’dan itibaren 15 dakika arayla, takip listesi özeti 14.30, yarınki bilançolar 20.00. Ekonomik hatırlatmalar etkinlikten 180/60/15 dakika önce gönderilir; ülke/önem filtreleri yalnız bunlara uygulanır. Günlük kâr/zarar Türkiye saatiyle 00.00 itibarıyla dünkü tamamlanmış değerlemeye dayanır. Saatler ve saat dilimi ayar ekranında gösterilmez. Setter, yalnız değişen alanı değil mevcut yedi boolean dahil tüm v2 tercihlerini gönderir; başarısız okuma/kayıt kullanıcıya hata gösterir ve kaydedildi durumuna geçmez.
+- Bildirime dokunma oturum ve yönlendirme hazır olana kadar bekler. `earnings_morning` ilgili günün portföy bilanço listesini, `earnings_midday` ilgili şirket etkinliğini, `watchlist_earnings` kullanıcının takip listesi bilançolarını, `earnings_today`/`earnings_tomorrow` payload’daki günün tüm katalog bilançolarını açar. `economic_reminder` ilgili ekonomik etkinliği açar; tercih adı çoğul `economic_reminders` iken push tipi tekildir. Daha önce teslim edilmiş `macro_morning` bildirimlerinin takvim bağlantısı geriye uyumluluk için korunur; bu tercih artık v2 ayarlarında bulunmaz. En fazla 20 ID içeren payload tam liste yerine kullanılmaz; ekran veriyi yeniden yükler. Makro bildirimlerinde günlük gruplama ve saatler tercihlerdeki saat dilimini kullanır; aylık önbellek saat dilimine göre ayrılır.
+- Portföy ve genel bugünkü bilanço özetleri, kaynak güncel ve başarılıyken boş günde de bilgi verebilir. Yarınki bilanço listesi boşsa gönderilmez. Takip listesi özetinde şirket bazlı portföy hatırlatmaları açıkken portföydeki şirketlerin tekrarlanmamasını backend sağlar. Bilanço bildirimleri beklenen açıklama günü hatırlatmalarıdır; sonuçların yayımlandığı anlamına gelmez.
+- `daily_portfolio` yalnız bildirimin `portfolio_id`, `snapshot_id`, `valuation_date` ve `currency` değerleriyle eşleşen tarihsel kaydı mevcut RLS yetkileriyle okur. Bu sayfada yalnız ilgili günün kâr/zararı gösterilir; toplam portföy değeri sorgulanmaz veya gösterilmez. Günlük değişim, karşılaştırılabilir önceki günün `absolute_pnl_base` farkıdır; önceki veri yoksa sıfır gösterilmez. Güncel fiyatlarla eski bildirim yeniden hesaplanmaz.
+- Payload keyfi URL açamaz. Bilinmeyen sürüm/tür, geçersiz alanlar ve geleceğe ayrılan `analysis_ready` ana ekrana yönlenir. Aynı yanıt tekrar yönlendirme oluşturmaz. Uygulama açıkken bildirim gösterilir; kullanıcı dokunmadan ekran değiştirilmez.
+
+Otomatik testler `tests/notification*.test.ts`, `tests/hooks/notification*.test.tsx` ve `tests/app/notifications.test.tsx` altında; takvim bağlantıları `tests/app/home.test.tsx` içinde doğrulanır. Mevcut her dizin için dört kapsam ölçütünde %85 CI barajı korunur.
+
+Gerçek cihaz kabul testi: yeni build yükleyin, izin verin ve cihaz kaydını doğrulayın; tercihi değiştirip ekranı yeniden açın; FinBot üzerinden yedi tür push alın; açık, arka plan ve kapalı uygulamada dokunmayı deneyin; tarihsel özetin bildirim günüyle eşleştiğini doğrulayın; hesap geçişinden sonra eski cihaz kaydının kaldırıldığını kontrol edin. EAS kimlik bilgileri ve gerçek teslimat, Jest veya JavaScript paketleme testleriyle kanıtlanamaz.
+
+
+## Açılış Ekranı
+
+Native açılış ekranı `expo-splash-screen` config plugin'iyle yapılandırılır. Açık temada `Lucrari_logo_light.png`, koyu temada `Lucrari_logo_dark.png` kullanılır. İki görsel de şeffaf ve yumuşatılmış kenarlıdır; beyaz zeminli eski `splash-icon.png` açılış ekranında kullanılmaz. Logo 180 birim genişlikte ortalanır; zeminler uygulamanın `#F8F6F7` ve `#171416` tema renkleridir. Tema varyantını cihazın sistem teması seçer. Ana içerik hazır olduğunda iOS açılış ekranı 300 ms solma efektiyle kapanır; oturumun hazırlanmasını bekleyen mevcut akış korunur.
+
+Görsel veya plugin ayarı değişiklikleri yeni native build gerektirir; Metro Reload yeterli değildir. Expo SDK 54'te development build açılış ekranının tüm native özelliklerini yansıtmayabilir. Görünümü gerçek cihazda yeni **preview** veya production build ile, uygulamayı tamamen kapatıp açık/koyu sistem temalarında yeniden açarak doğrulayın.
+
+
+## Etkileşim Geri Bildirimi ve Hareket
+
+- Tüm uygulama titreşimleri `services/feedback/haptics.ts` üzerinden geçer. Seçimlerde hafif seçim geri bildirimi, içerik açılışında hafif dokunma, işlem sonucunda başarı/hata geri bildirimi kullanılır. Web'de titreşim çalıştırılmaz; native hata veya desteklenmeyen donanım kullanıcı işlemini durdurmaz. Pozisyon kartı açılışında üst ekran aynı dokunuşu ikinci kez titreştirmez.
+- Başarılı nakit ve alış/satış kayıtları, veri kaydı tamamlandıktan sonra ortak `FeedbackToast` ile bildirilir. Mesaj dört saniyede kapanır veya elle kapatılır; yeni başarı eskisini değiştirir. Bu mesajlar sistem push bildirimi değildir. Kayıt hataları ve kullanıcı kararı gerektiren onay/aksiyon pencereleri korunur.
+- İlk portföy, izleme listesi ve günlük takvim yüklemesi `LoadingSkeleton` kart taslaklarını kullanır. Taslaklarda sahte finansal değer bulunmaz; sürekli yanıp sönen animasyon kullanılmaz. Mevcut veri varken yenilemede kartlar ve takvim olayları korunur.
+- Filtrelerde ve başarı mesajlarında 180 ms geçişler, izleme listesi genişletmede native layout geçişi kullanılır. Finansal rakamlar animasyonla saydırılmaz. Modallar kısa fade geçişi kullanır; işlem formunun sekme hareketi kısaltılmıştır.
+- `useReducedMotion` sistemin Hareketi Azalt tercihini okur ve açık uygulamadaki değişiklikleri dinler. Tercih okunana kadar hareket kapalıdır. Tercih açıkken yeni geçişler, modal animasyonu ve ana sayfa parallax hareketi devre dışıdır. Animasyonlar unmount/tercih değişiminde, mesaj zamanlayıcıları mesaj değişimi/unmount durumunda temizlenir.
+
+Doğrulama: `tests/feedback.test.ts`, `tests/hooks/reduced-motion.test.tsx`, `tests/ui/feedback.test.tsx` ve portföy ekran testleri ortak geri bildirim, süre/dismiss davranışı, kayıt öncesi başarı göstermeme ve hareket tercihlerini kapsar. Gerçek cihazda titreşim hissi, açık/koyu tema, VoiceOver/TalkBack ve Hareketi Azalt açık/kapalı görsel kontrolü ayrıca yapılmalıdır. Bu geliştirmeler mevcut native paketleri kullanır; yeni paket veya native yapılandırma gerektirmez.

@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from '@/components/feedback/loading-skeleton';
 /**
  * Day Events List Component
  * 
@@ -13,10 +14,9 @@ import {
   View,
   Text,
   TouchableOpacity,
-  ActivityIndicator,
   Platform,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -163,13 +163,8 @@ export function DayEventsList({
       <View style={[styles.divider, { backgroundColor: theme.borderSubtle }]} />
 
       {/* Content Area */}
-      {isLoading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="small" color={theme.tint} />
-          <Text style={[styles.loadingText, { color: theme.textSecondary }]}>
-            Finansal olaylar yükleniyor...
-          </Text>
-        </View>
+      {isLoading && events.length === 0 ? (
+        <LoadingSkeleton label="Finansal olaylar yükleniyor..." />
       ) : events.length === 0 ? (
         <View style={styles.emptyState}>
           {activeFilter === 'portfolio' ? (
@@ -405,15 +400,6 @@ const styles = StyleSheet.create({
   divider: {
     height: 1,
     marginHorizontal: -16,
-  },
-  loadingContainer: {
-    paddingVertical: 24,
-    alignItems: 'center',
-    gap: 8,
-  },
-  loadingText: {
-    fontSize: 13,
-    fontWeight: '500',
   },
   emptyState: {
     paddingVertical: 24,

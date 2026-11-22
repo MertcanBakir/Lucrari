@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { PanResponder, Platform, StyleSheet, Text, View } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
 import { useAppTheme } from '@/context/theme-context';
 import { Colors } from '@/constants/theme';

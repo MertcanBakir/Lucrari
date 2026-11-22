@@ -767,6 +767,7 @@ export interface MonthScopedCalendarRawState {
 }
 
 export interface ResolveMonthScopedCalendarParams {
+  scopeKey?: string;
   rawState: MonthScopedCalendarRawState;
   currentYear: number;
   currentMonth: number;
@@ -788,7 +789,7 @@ export function resolveMonthScopedCalendarState(
   hasLoadedSuccessfully: boolean;
 } {
   const { rawState, currentYear, currentMonth } = params;
-  const expectedKey = `${currentYear}-${currentMonth}`;
+  const expectedKey = params.scopeKey ?? `${currentYear}-${currentMonth}`;
 
   // If internal rawState belongs to another month/year, return clean loading state on that render frame
   if (rawState.monthKey !== expectedKey) {

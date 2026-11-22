@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
   StyleSheet,
@@ -10,7 +11,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import * as Application from 'expo-application';
 import Constants from 'expo-constants';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -25,6 +26,7 @@ import { createResetIntent } from '@/utils/mutation-intent';
 import { isRetryablePortfolioTransportError } from '@/utils/portfolio-errors';
 
 export default function MenuScreen() {
+  const router = useRouter();
   const { colorScheme, themeMode, setThemeMode } = useAppTheme();
   const { user, isAuthenticated, isAuthReady, resetAccount } = useAuth();
   const [isResetting, setIsResetting] = useState<boolean>(false);
@@ -204,20 +206,19 @@ export default function MenuScreen() {
 
             <View style={[styles.divider, { backgroundColor: theme.borderSubtle }]} />
 
-            <View style={styles.menuRow}>
+            <TouchableOpacity style={styles.menuRow} accessibilityRole="button" accessibilityLabel="Bildirim ayarları"
+              onPress={() => router.push('/notification-settings')}>
               <View style={styles.menuRowLeft}>
                 <View style={[styles.iconWrapper, { backgroundColor: theme.surfaceHighlight }]}>
                   <IconSymbol size={18} name="calendar" color={theme.tint} />
                 </View>
                 <View>
-                  <Text style={[styles.menuRowTitle, { color: theme.text }]}>Bilanço Takvimi Bildirimleri</Text>
-                  <Text style={[styles.menuRowSubtitle, { color: theme.textSecondary }]}>Takip edilen hisseler için bildirim</Text>
+                  <Text style={[styles.menuRowTitle, { color: theme.text }]}>Bildirimler</Text>
+                  <Text style={[styles.menuRowSubtitle, { color: theme.textSecondary }]}>Cihaz izni ve bildirim tercihleri</Text>
                 </View>
               </View>
-              <View style={[styles.badgeActive, { backgroundColor: theme.positiveBg, borderColor: theme.positiveBorder }]}>
-                <Text style={[styles.badgeActiveText, { color: theme.positive }]}>Açık</Text>
-              </View>
-            </View>
+              <IconSymbol size={16} name="chevron.right" color={theme.textSecondary} />
+            </TouchableOpacity>
           </View>
         </View>
 

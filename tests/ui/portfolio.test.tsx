@@ -1,3 +1,4 @@
+import { dismissFeedback, getFeedbackSnapshot } from '@/services/feedback/feedback-service';
 import { deferred } from '../helpers/deferred';
 import { useAppTheme } from '@/context/theme-context';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
@@ -29,6 +30,7 @@ const instrument = {
 const lookup = jest.mocked(searchInstrumentsDetailed);
 
 beforeEach(() => {
+  dismissFeedback();
   jest.spyOn(Alert, 'alert').mockImplementation(() => {});
   mockPush.mockClear();
   lookup.mockReset().mockResolvedValue({ items: [instrument], error: null, isStale: false, hasMore: false });
@@ -303,4 +305,14 @@ it('shows a controlled error after a thrown catalog request and recovers through
   expect(screen.getByText('Portföyünüzde Satılabilir Varlık Yok')).toBeOnTheScreen();
   fireEvent.press(screen.getByText('Alış'));
   await screen.findByText('THYAO');
+});
+
+it('shows cash success only after persistence without a blocking success dialog', async () => {
+  const pending = deferred<void>(); const close = jest.fn();
+  render(<CashBalanceModal visible tryBalance={0} usdBalance={0} onClose={close} onSave={() => pending.promise} />);
+  fireEvent.press(screen.getByText('Bakiyeleri Kaydet'));
+  expect(getFeedbackSnapshot()).toBeNull(); expect(close).not.toHaveBeenCalled();
+  await act(async () => pending.resolve());
+  expect(getFeedbackSnapshot()?.message).toBe('Nakit güncellendi.');
+  expect(Alert.alert).not.toHaveBeenCalled(); expect(close).toHaveBeenCalledTimes(1);
 });

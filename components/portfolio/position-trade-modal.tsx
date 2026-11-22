@@ -1,3 +1,5 @@
+import { useReducedMotion } from '@/hooks/use-reduced-motion';
+import { showSuccess } from '@/services/feedback/feedback-service';
 /**
  * Position Trade Modal Component (Modal 6)
  * 
@@ -27,7 +29,7 @@ import {
   TouchableWithoutFeedback,
   Keyboard,
 } from 'react-native';
-import * as Haptics from 'expo-haptics';
+import { haptics as Haptics } from '@/services/feedback/haptics';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -63,6 +65,7 @@ export function PositionTradeModal({
   onClose,
   onSubmit,
 }: PositionTradeModalProps) {
+  const reducedMotion = useReducedMotion();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const theme = Colors[isDark ? 'dark' : 'light'];
@@ -173,8 +176,10 @@ export function PositionTradeModal({
         clientRequestId: intent.clientRequestId,
       });
       intentRef.current = null;
+      showSuccess('İşlem kaydedildi.');
       onClose();
     } catch (err) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('İşlem Başarısız', formatPortfolioRpcError(err));
     } finally {
       submissionPendingRef.current = false;
@@ -183,7 +188,7 @@ export function PositionTradeModal({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType={reducedMotion ? 'none' : 'fade'} onRequestClose={onClose}>
       <KeyboardAvoidingView
         style={styles.modalOverlay}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
