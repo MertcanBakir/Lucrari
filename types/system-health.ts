@@ -38,7 +38,7 @@ export type OverallHealthStatus =
   | 'running'
   | 'unknown';
 
-export type SystemHealthCategoryKey = 'prices' | 'calendar' | 'portfolio' | 'summary' | 'other';
+export type SystemHealthCategoryKey = 'prices' | 'calendar' | 'portfolio' | 'other';
 
 export type ExpectedJobCode =
   | 'BIST_PRICES'
@@ -48,9 +48,7 @@ export type ExpectedJobCode =
   | 'USDTRY_PRICE'
   | 'EARNINGS_CALENDAR'
   | 'ECONOMIC_CALENDAR'
-  | 'PORTFOLIO_SNAPSHOTS'
-  | 'MORNING_SUMMARY'
-  | 'CLOSING_SUMMARY';
+  | 'PORTFOLIO_SNAPSHOTS';
 
 export interface ExpectedJobMetadata {
   jobCode: ExpectedJobCode;

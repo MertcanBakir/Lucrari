@@ -4,13 +4,13 @@ import { useAuth } from '@/context/auth-context';
 import { useAppTheme } from '@/context/theme-context';
 import { deferred } from '../helpers/deferred';
 import { Colors } from '@/constants/theme';
+import { useAgentHealth } from '@/hooks/use-agent-health';
 import { useAnalysisHealth } from '@/hooks/use-analysis-health';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useColorScheme as useWebColorScheme } from '@/hooks/use-color-scheme.web';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { useSupabaseHealth } from '@/hooks/use-supabase-health';
 import { useSystemHealth } from '@/hooks/use-system-health';
-import { checkAnalysisHealth } from '@/services/analysis/analysis-service';
 import * as supabaseHealth from '@/services/supabase/health';
 import * as systemHealth from '@/services/system-health/system-health-service';
 import { evaluateOverallHealth } from '@/utils/system-health-formatters';
@@ -24,6 +24,7 @@ jest.mock('@react-navigation/native', () => ({
 }));
 jest.mock('@/context/auth-context', () => ({ useAuth: jest.fn() }));
 jest.mock('@/services/analysis/analysis-service', () => ({ checkAnalysisHealth: jest.fn() }));
+jest.mock('@/hooks/use-agent-health', () => ({ useAgentHealth: jest.fn() }));
 jest.mock('@/services/supabase/health', () => ({
   checkSupabaseHealth: jest.fn(), getSupabaseHealthCacheSnapshot: jest.fn(), subscribeSupabaseHealth: jest.fn(),
 }));
@@ -62,21 +63,15 @@ it('uses theme values and hydrates the browser color scheme', () => {
   expect(result.current).toEqual({ native: 'light', web: 'dark', fallback: Colors.light.text, override: '#123456' });
 });
 
-it('checks Agent health only when focused and discards an obsolete request', async () => {
-  let finish: (value: boolean) => void = () => {};
-  const request = new Promise<boolean>((resolve) => { finish = resolve; });
-  const health = jest.mocked(checkAnalysisHealth).mockReturnValueOnce(request).mockRejectedValueOnce('offline');
-  const hook = renderHook(() => useAnalysisHealth());
-  const signal = health.mock.calls[0][0];
+it('uses the EC2-gated health source for the legacy compatibility hook', () => {
+  const health = jest.mocked(useAgentHealth);
+  health.mockReturnValue({ status: 'checking' } as ReturnType<typeof useAgentHealth>);
+  const hook = renderHook(useAnalysisHealth);
   expect(hook.result.current).toBe('checking');
-  mockFocused = false;
-  hook.rerender(undefined);
-  expect(signal?.aborted).toBe(true);
-  await act(async () => finish(true));
-  expect(hook.result.current).toBe('checking');
-  mockFocused = true;
-  hook.rerender(undefined);
-  await waitFor(() => expect(hook.result.current).toBe('unreachable'));
+  health.mockReturnValue({ status: 'online' } as ReturnType<typeof useAgentHealth>);
+  hook.rerender(undefined); expect(hook.result.current).toBe('online');
+  health.mockReturnValue({ status: 'stopped' } as ReturnType<typeof useAgentHealth>);
+  hook.rerender(undefined); expect(hook.result.current).toBe('unreachable');
 });
 
 it('loads a Supabase report and keeps it during a failed manual refresh', async () => {

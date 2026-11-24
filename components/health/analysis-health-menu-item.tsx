@@ -17,6 +17,9 @@ export function AnalysisHealthMenuItem() {
   const resourceColor = { ok: theme.positive, warning: theme.warning, critical: theme.negative, unknown: theme.textSecondary };
   const label = resourceStatus ? RESOURCE_STATUS_LABELS[resourceStatus] : 'Çevrimiçi';
   const visuals = {
+    stopped: { label: 'Sunucu kapalı', color: theme.textSecondary, background: theme.surfaceHighlight, border: theme.border },
+    pending: { label: 'Sunucu açılıyor', color: theme.warning, background: theme.warningBg, border: theme.warningBorder },
+    stopping: { label: 'Sunucu kapanıyor', color: theme.warning, background: theme.warningBg, border: theme.warningBorder },
     checking: { label: 'Kontrol ediliyor', color: theme.textSecondary, background: theme.surfaceHighlight, border: theme.border },
     online: { label, color: resourceStatus ? resourceColor[resourceStatus] : theme.positive, background: theme.surfaceHighlight, border: theme.border },
     forbidden: { label: 'Yetki gerekli', color: theme.warning, background: theme.warningBg, border: theme.warningBorder },

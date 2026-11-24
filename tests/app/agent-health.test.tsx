@@ -5,13 +5,14 @@ import { useAppTheme } from '@/context/theme-context';
 import { normalizeAgentHealth } from '@/utils/agent-health';
 import { hostHealthPayload } from '../ui/agent-health-fixtures';
 
+jest.mock('@/components/health/server-management-card', () => ({ ServerManagementCard: () => null }));
 const mockBack = jest.fn();
 jest.mock('expo-router', () => ({ useRouter: () => ({ back: mockBack }) }));
 jest.mock('@/hooks/use-agent-health', () => ({ useAgentHealth: jest.fn() }));
 const refresh = jest.fn().mockResolvedValue(undefined);
 const online = {
   status: 'online' as const, report: normalizeAgentHealth(hostHealthPayload), checkedAt: new Date(),
-  message: null, isRefreshing: false, refresh,
+  server: {} as ReturnType<typeof useAgentHealth>['server'], message: null, isRefreshing: false, refresh,
 };
 
 beforeEach(() => jest.clearAllMocks());

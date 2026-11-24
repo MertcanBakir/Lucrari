@@ -84,22 +84,6 @@ export const EXPECTED_JOBS_CATALOG: readonly ExpectedJobMetadata[] = [
     displayName: 'Portföy Günlük Değerleme Motoru',
     sortOrder: 8,
   },
-  {
-    jobCode: 'MORNING_SUMMARY',
-    category: 'summary',
-    categoryKey: 'summary',
-    categoryTitle: 'Piyasa Özetleri',
-    displayName: 'Sabah Piyasa Bülteni',
-    sortOrder: 9,
-  },
-  {
-    jobCode: 'CLOSING_SUMMARY',
-    category: 'summary',
-    categoryKey: 'summary',
-    categoryTitle: 'Piyasa Özetleri',
-    displayName: 'Akşam Piyasa Kapanış Raporu',
-    sortOrder: 10,
-  },
 ] as const;
 
 const EXPECTED_JOBS_MAP = new Map<string, ExpectedJobMetadata>(
@@ -138,8 +122,7 @@ const CATEGORY_SORT_ORDER: Record<SystemHealthCategoryKey, number> = {
   prices: 1,
   calendar: 2,
   portfolio: 3,
-  summary: 4,
-  other: 5,
+  other: 4,
 };
 
 /**
@@ -507,7 +490,6 @@ export function groupJobsIntoSections(items: NormalizedJobHealthItem[]): SystemH
     prices: [],
     calendar: [],
     portfolio: [],
-    summary: [],
     other: [],
   };
 
@@ -521,7 +503,7 @@ export function groupJobsIntoSections(items: NormalizedJobHealthItem[]): SystemH
   }
 
   const sections: SystemHealthSection[] = [];
-  const orderedKeys: SystemHealthCategoryKey[] = ['prices', 'calendar', 'portfolio', 'summary', 'other'];
+  const orderedKeys: SystemHealthCategoryKey[] = ['prices', 'calendar', 'portfolio', 'other'];
 
   for (const key of orderedKeys) {
     const groupItems = groups[key];
