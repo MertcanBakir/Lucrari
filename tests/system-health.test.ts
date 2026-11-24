@@ -233,9 +233,9 @@ describe('System and Data Health Comprehensive Test Suite', () => {
       ]);
 
       assert.strictEqual(rpcCount, 1);
-      assert.strictEqual(r1.items.length, 10);
-      assert.strictEqual(r2.items.length, 10);
-      assert.strictEqual(r3.items.length, 10);
+      assert.strictEqual(r1.items.length, 8);
+      assert.strictEqual(r2.items.length, 8);
+      assert.strictEqual(r3.items.length, 8);
     });
 
     it('4. Force refresh does not bypass an active in-flight request', async () => {
@@ -288,7 +288,7 @@ describe('System and Data Health Comprehensive Test Suite', () => {
 
       const report2 = await fetchSystemHealth();
       assert.strictEqual(rpcCount, 1);
-      assert.strictEqual(report2.items.length, 10);
+      assert.strictEqual(report2.items.length, 8);
     });
 
     it('6. Post-TTL calls trigger a fresh RPC call', async () => {
@@ -488,7 +488,7 @@ describe('System and Data Health Comprehensive Test Suite', () => {
       });
 
       const report = await fetchSystemHealth();
-      assert.strictEqual(report.items.length, 10);
+      assert.strictEqual(report.items.length, 8);
       assert.strictEqual(attempt, 2);
     });
   });
@@ -509,7 +509,7 @@ describe('System and Data Health Comprehensive Test Suite', () => {
     });
 
     it('15. Single unknown message_code with healthy other fields fails closed to unknown, sets isIncomplete=true, and forces overall unknown', () => {
-      // 10 catalog rows: 9 completely valid and healthy, 1 has invalid message_code but health_status='healthy'
+      // 8 catalog rows: 7 completely valid and healthy, 1 has invalid message_code but health_status='healthy'
       const corruptedData = sampleValidRpcData.map((job, idx) => {
         if (idx === 0) {
           return {
@@ -574,7 +574,7 @@ describe('System and Data Health Comprehensive Test Suite', () => {
     });
 
     it('17. Valid never_run item is not treated as a contract error (isIncomplete=false)', () => {
-      // 10 catalog rows: 9 healthy, 1 valid never_run with valid checked_at and is_overdue boolean
+      // 8 catalog rows: 7 healthy, 1 valid never_run with valid checked_at and is_overdue boolean
       const validNeverRunData = sampleValidRpcData.map((job, idx) => {
         if (idx === 0) {
           return {
@@ -608,7 +608,7 @@ describe('System and Data Health Comprehensive Test Suite', () => {
 
       const result = normalizeSystemHealthResponse(partialData);
       assert.strictEqual(result.isIncomplete, true);
-      assert.strictEqual(result.items.length, 10);
+      assert.strictEqual(result.items.length, 8);
 
       const missingJob = result.items.find((j) => j.jobCode === 'TEFAS_PRICES');
       assert.ok(missingJob);
@@ -634,7 +634,7 @@ describe('System and Data Health Comprehensive Test Suite', () => {
       ];
 
       const result = normalizeSystemHealthResponse(dataWithUnknown);
-      assert.strictEqual(result.items.length, 10);
+      assert.strictEqual(result.items.length, 8);
       assert.ok(!result.items.some((j) => j.jobCode === 'UNAUTHORIZED_CUSTOM_JOB'));
     });
 
@@ -703,21 +703,19 @@ describe('System and Data Health Comprehensive Test Suite', () => {
         createItem({ jobCode: 'EARNINGS_CALENDAR', healthStatus: 'unknown', executionStatus: 'never_run' }),
         createItem({ jobCode: 'ECONOMIC_CALENDAR', healthStatus: 'unknown', executionStatus: 'never_run' }),
         createItem({ jobCode: 'PORTFOLIO_SNAPSHOTS', healthStatus: 'unknown', executionStatus: 'never_run' }),
-        createItem({ jobCode: 'MORNING_SUMMARY', healthStatus: 'unknown', executionStatus: 'never_run' }),
-        createItem({ jobCode: 'CLOSING_SUMMARY', healthStatus: 'unknown', executionStatus: 'never_run' }),
       ];
 
       const overall = evaluateOverallHealth(items);
       assert.strictEqual(overall.status, 'unknown');
       assert.strictEqual(overall.title, 'İlk çalışma sonuçları bekleniyor.');
-      assert.strictEqual(overall.unknownCount, 7);
-      assert.strictEqual(overall.subtitle, '7 servis ilk çalışma sonucunu bekliyor');
+      assert.strictEqual(overall.unknownCount, 5);
+      assert.strictEqual(overall.subtitle, '5 servis ilk çalışma sonucunu bekliyor');
     });
 
     it('22. healthy + skipped/inactive evaluates to overall healthy', () => {
       const items: NormalizedJobHealthItem[] = [
         createItem({ jobCode: 'BIST_PRICES', healthStatus: 'healthy', executionStatus: 'success' }),
-        createItem({ jobCode: 'MORNING_SUMMARY', healthStatus: 'inactive', executionStatus: 'skipped' }),
+        createItem({ jobCode: 'TEFAS_PRICES', healthStatus: 'inactive', executionStatus: 'skipped' }),
       ];
 
       const overall = evaluateOverallHealth(items);
@@ -807,11 +805,10 @@ describe('System and Data Health Comprehensive Test Suite', () => {
       }));
 
       const sections = groupJobsIntoSections(items);
-      assert.strictEqual(sections.length, 4);
+      assert.strictEqual(sections.length, 3);
       assert.strictEqual(sections[0].key, 'prices');
       assert.strictEqual(sections[1].key, 'calendar');
       assert.strictEqual(sections[2].key, 'portfolio');
-      assert.strictEqual(sections[3].key, 'summary');
     });
 
     it('27. Duration and date formatters handle edge cases gracefully', () => {

@@ -55,7 +55,7 @@ npx --yes eas-cli@27.4.1 build --platform ios --profile preview
 
 Build bağlantısı/QR koduyla kayıtlı gerçek iPhone'a kurun. Anonim oturumu korumak için mevcut uygulamayı silmeden güncelleyin. Native açılış ekranını uygulamayı tamamen kapatıp yeniden açarak kontrol edin.
 
-EAS bulut build ortamında `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` veya `EXPO_PUBLIC_SUPABASE_ANON_KEY` ve analiz özelliği için `EXPO_PUBLIC_ANALYSIS_API_URL` tanımlı olmalıdır. Git tarafından dışlanan yerel `.env` dosyalarına bulut build'in erişeceğini varsaymayın. Yalnız mobil uygulamaya dağıtılması güvenli public/publishable değerler kullanılmalıdır; servis anahtarı veya veritabanı bağlantısı eklemeyin.
+EAS bulut build ortamında `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` veya `EXPO_PUBLIC_SUPABASE_ANON_KEY` ve analiz özelliği için `EXPO_PUBLIC_ANALYSIS_API_URL` tanımlı olmalıdır. Uzaktan EC2 yönetimi için ayrıca `EXPO_PUBLIC_SERVER_MANAGEMENT_API_URL` gerekir. Git tarafından dışlanan yerel `.env` dosyalarına bulut build'in erişeceğini varsaymayın. Yalnız mobil uygulamaya dağıtılması güvenli public/publishable değerler kullanılmalıdır; servis anahtarı veya veritabanı bağlantısı eklemeyin.
 
 ---
 
@@ -262,11 +262,21 @@ log.warn('analysis.request.failed', {
 
 Menüdeki **Agent servisi** kartı API ve kaynak durumunu gösterir. Kart `/agent-health` detay sayfasını açar. CPU yüzdesi, mantıksal çekirdek sayısı, örnekleme aralığı, bellek kullanımı (GiB), kullanılabilir bellek, kaynak örnekleme zamanı ve sistem çalışma süresi burada gösterilir.
 
+Detay ekranındaki **FinBot sunucusu** kartı, analiz sunucusundan bağımsız `EXPO_PUBLIC_SERVER_MANAGEMENT_API_URL` üzerinden `GET /status`, gövdesiz `POST /start` ve `POST /stop` çağrılarını yapar. Yönetim API’si EC2 kapalıyken de erişilebilir. Mevcut Supabase access tokenı gönderilir; AWS anahtarı kullanılmaz. Analiz, rapor ve `/healthz` istekleri mevcut `EXPO_PUBLIC_ANALYSIS_API_URL` adresinde kalır.
+
+- Yönetim yalnız oturum hazırken, ekran odaktayken ve uygulama ön plandayken sorgulanır. `401` oturumu yenileme uyarısı verir; `403` yönetim düğmelerini gizler. Kaynak sağlık ekranı kullanılabilir kalır.
+- `stopped` durumunda başlatma, `running` durumunda onaylı durdurma sunulur. `pending`/`stopping` sırasında işlem düğmeleri devre dışıdır. Mutasyonlar otomatik tekrarlanmaz; çift dokunma engellenir.
+- Geçişte veya EC2 çalışırken API henüz hazır değilse, tamamlanan istekler arasında 5 saniye beklenir; otomatik takip en fazla 5 dakika sürer. Ardından elle yeniden deneme gerekir. Ekran kapanınca, hesap değişince veya uygulama arka plana geçince takip iptal edilir. Menüde kararlı durumda sürekli EC2 sorgusu yapılmaz; detay ekranında her kaynak yenilemesinden önce EC2 durumu yeniden doğrulanır.
+- EC2 `running` olması API’nin hazır olduğunu kanıtlamaz. İlk sağlık isteği sürerken “Sunucu açılıyor” gösterilir. Sağlık kontrolü başarılı olunca “API çevrimiçi”, başarısız olunca “API’ye henüz ulaşılamıyor” ve yeniden deneme gösterilir. Sağlık hatası EC2’nin `running` durumunu değiştirmez.
+- Ağ/`503` hatasında son doğrulanmış EC2 durumu korunur, hata ve yeniden deneme gösterilir. Yeni bir durum doğrulanmadan başka güç işlemi gönderilmez.
+- `409 ANALYSIS_ACTIVE` bekleyen/çalışan analiz nedeniyle kapatmanın reddedildiğini gösterir. Backend’in kapatma öncesi iş kontrolü ve yeni analiz kabulünü engelleyen akışı değiştirilmez; mobil istemci bu kontrolleri atlamaz. Analiz ekranının mevcut yetki kuralları korunur.
+- Gerçek yetkili başlat/durdur döngüsü fiziksel cihazda ayrıca doğrulanmalıdır; otomatik testler canlı sunucuyu değiştirmez.
+
 Detay sorgusu mevcut Supabase oturumunun güncel access token'ıyla `GET /healthz` isteği yapar. Mevcut API istemcisi 401 yanıtında oturumu bir kez yeniler. Backend yalnız yapılandırılmış kişisel hesap sahibine detay verir. 403 yetki gereksinimi, geçersiz oturum ve bağlantı hatası ayrı gösterilir. Kaynak bilgisi olmayan eski/public sağlık yanıtları API erişimi olarak gösterilir.
 
-Detay ekranı odaktayken ve uygulama ön plandayken 12 saniyede bir yenilenir. Menü kartı odaklandığında bir kez kontrol edilir. İstekler önbelleksizdir, aynı anda ikinci istek başlatılmaz ve kullanıcı değişimi, ekran kapanması veya uygulamanın arka plana geçmesi bekleyen isteği iptal eder. Başarısız yenilemede eski sayılar gösterilmez.
+Menü ve detay ekranı önce yönetim API’sinden EC2 durumunu doğrular. `stopped`, `pending` ve `stopping` durumlarında analiz API’sine `/healthz` isteği gönderilmez. Yönetim durumu doğrulanamazsa son EC2 durumu korunur ve sağlık sorgusu yapılmaz. Yalnız `running` doğrulandıktan sonra menü public sağlık kontrolü, detay ekranı kaynak sağlık kontrolü yapar; kaynak yetkisi reddedilirse public sağlık ayrı doğrulanır. Detay ekranı odaktayken ve uygulama ön plandayken, API hazır olduktan sonra 12 saniye bekleyerek yeniden yönetim durumu ve kaynakları kontrol eder. Detaydaki sunucu kartı aynı sonucu kullanır; ikinci bir sorgu döngüsü başlatmaz. Menü kartı odaklandığında aynı yönetim/sağlık akışıyla kontrol edilir. İstekler önbelleksizdir, aynı anda ikinci istek başlatılmaz ve kullanıcı değişimi, ekran kapanması veya uygulamanın arka plana geçmesi bekleyen isteği iptal eder. Başarısız yenilemede eski sayılar gösterilmez.
 
-`scope: host` sunucunun tüm iş yüklerini, `scope: system` API ortamının sistem ölçümlerini ifade eder. İlk CPU örneği ve eksik sayaçlar ölçüm bekleniyor olarak gösterilir. CPU için %90/%98, bellek için %85/%95 uyarı/kritik sınırları uygulanır. Bu kontrol arka plan işlerini, veritabanını, model veya ChatGPT oturumlarını, disk sağlığını ve AWS durumunu doğrulamaz. Sunucuda kaynak sayaçlarını sunan backend imajı ile Compose yapılandırmasının dağıtılmış olması gerekir.
+`scope: host` sunucunun tüm iş yüklerini, `scope: system` API ortamının sistem ölçümlerini ifade eder. İlk CPU örneği ve eksik sayaçlar ölçüm bekleniyor olarak gösterilir. CPU için %90/%98, bellek için %85/%95 uyarı/kritik sınırları uygulanır. Bu kaynak kontrolü arka plan işlerini, veritabanını, model veya ChatGPT oturumlarını, disk sağlığını ve AWS instance/system sağlık kontrollerini doğrulamaz. Sunucuda kaynak sayaçlarını sunan backend imajı ile Compose yapılandırmasının dağıtılmış olması gerekir.
 
 ## 10. Agent ve Finansal Çoklu Ajan Analizleri
 
@@ -324,6 +334,7 @@ Yeni analizlerde analist seçenekleri `market`, `macro` (Makro Analist), `news` 
 
 ```env
 EXPO_PUBLIC_ANALYSIS_API_URL=https://analysis.example.com
+EXPO_PUBLIC_SERVER_MANAGEMENT_API_URL=https://dcbfq7xdyd.execute-api.eu-west-1.amazonaws.com
 ```
 
 

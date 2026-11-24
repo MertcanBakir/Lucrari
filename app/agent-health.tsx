@@ -2,6 +2,7 @@ import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, Toucha
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { ServerManagementCard } from '@/components/health/server-management-card';
 import { AgentHealthCard } from '@/components/health/agent-health-card';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
@@ -9,9 +10,12 @@ import { useAppTheme } from '@/context/theme-context';
 import { useAgentHealth } from '@/hooks/use-agent-health';
 
 const messages = {
+  stopped: 'Sunucu kapalı. API sağlık kontrolü yapılmıyor.',
+  pending: 'Sunucu açılıyor',
+  stopping: 'Sunucu kapanıyor',
   checking: 'Agent servisi kontrol ediliyor…',
   online: 'API çevrimiçi',
-  unreachable: 'Agent servisine erişilemiyor. Sunucu veya ağ bağlantısını kontrol edin.',
+  unreachable: 'API’ye henüz ulaşılamıyor',
   forbidden: 'Kaynak ölçümleri yalnızca yapılandırılmış kişisel hesap sahibine açıktır.',
   unauthorized: 'Kaynak ölçümleri için geçerli bir oturum gerekli. Hesabınızla tekrar giriş yapın.',
   error: 'Agent sağlık bilgileri şu anda alınamıyor.',
@@ -40,6 +44,7 @@ export default function AgentHealthScreen() {
       <ScrollView contentContainerStyle={styles.content} refreshControl={
         <RefreshControl refreshing={health.isRefreshing} onRefresh={() => { void health.refresh(); }} tintColor={theme.tint} />
       }>
+        <ServerManagementCard server={health.server} />
         <Text accessibilityLiveRegion="polite" style={[styles.status, { color: health.status === 'unreachable' ? theme.negative : theme.text }]}>
           {messages[health.status]}
         </Text>
@@ -48,7 +53,7 @@ export default function AgentHealthScreen() {
           Son kontrol {health.checkedAt.toLocaleTimeString('tr-TR')}
         </Text>}
         <Text style={[styles.detail, { color: theme.textSecondary }]}>
-          Sayfa açıkken ve uygulama ön plandayken 12 saniyede bir yenilenir.
+          Sunucu çalışırken kaynaklar 12 saniye arayla kontrol edilir. Sunucu kapalıyken API sağlık isteği gönderilmez.
         </Text>
       </ScrollView>
     </View>
