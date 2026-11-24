@@ -414,3 +414,11 @@ Görsel veya plugin ayarı değişiklikleri yeni native build gerektirir; Metro 
 - `useReducedMotion` sistemin Hareketi Azalt tercihini okur ve açık uygulamadaki değişiklikleri dinler. Tercih okunana kadar hareket kapalıdır. Tercih açıkken yeni geçişler, modal animasyonu ve ana sayfa parallax hareketi devre dışıdır. Animasyonlar unmount/tercih değişiminde, mesaj zamanlayıcıları mesaj değişimi/unmount durumunda temizlenir.
 
 Doğrulama: `tests/feedback.test.ts`, `tests/hooks/reduced-motion.test.tsx`, `tests/ui/feedback.test.tsx` ve portföy ekran testleri ortak geri bildirim, süre/dismiss davranışı, kayıt öncesi başarı göstermeme ve hareket tercihlerini kapsar. Gerçek cihazda titreşim hissi, açık/koyu tema, VoiceOver/TalkBack ve Hareketi Azalt açık/kapalı görsel kontrolü ayrıca yapılmalıdır. Bu geliştirmeler mevcut native paketleri kullanır; yeni paket veya native yapılandırma gerektirmez.
+
+### Preview tanılama kayıtları
+
+Preview build, seçilmiş `info`, `warn` ve `error` olaylarının sınırlı tanılama verilerini toplu olarak `submit_mobile_diagnostics` RPC’sine gönderir. `debug`, serbest mesajlar, stack, token, finansal tutarlar ve ham yanıtlar gönderilmez. İzinli olay kodları, HTTP durumları ve bilinen bildirim hata kodları istemcide ve RPC’de sınırlandırılır; kayıtlar kullanıcıya açık değildir. Dashboard üzerinden yönetici inceleyebilir.
+
+Gönderilemeyen son 100 olay hesapla ilişkilendirilerek cihazda saklanır; oturum değişince eski kuyruk silinir. Uygulama ön plandayken başarısız gönderimler yeniden denenir. Her kayıt benzersiz kimlik taşır; yanıt kaybı sonrası tekrar gönderim çoğaltılmaz. Sunucu kullanıcı başına saatte 200 olay ve istekte 20 olay sınırı uygular. Kuyruk dolduğunda eski kayıtlar düşebilir; uygulama kapalıyken gönderim garantisi yoktur.
+
+Haftalık pazar 00:00 UTC (Türkiye 03:00) `pg_cron` görevi 30 günden eski kayıtları ve en yeni 10.000 dışındakileri siler; arada bu sınırlar geçici aşılabilir. Bu özellik için migration canlıya uygulanmalı ve yeni preview build alınmalıdır. Geliştirme ve production build’lerde `EXPO_PUBLIC_DIAGNOSTICS_ENABLED` açılmaz.

@@ -749,6 +749,7 @@ export interface Database {
       [_ in never]: never;
     };
     Functions: {
+      submit_mobile_diagnostics: { Args: { p_entries: Json; p_expected_user: string }; Returns: undefined };
       register_push_device: { Args: { p_installation_id: string; p_project_id: string; p_environment: string; p_token: string }; Returns: string };
       unregister_push_device: { Args: { p_device_id: string }; Returns: undefined };
       get_notification_preferences_v2: { Args: Record<PropertyKey, never>; Returns: Json };

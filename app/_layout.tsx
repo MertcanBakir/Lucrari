@@ -1,3 +1,4 @@
+import { useRemoteDiagnostics } from '@/hooks/use-remote-diagnostics';
 import { FeedbackToast } from '@/components/feedback/feedback-toast';
 import { useNotificationLifecycle } from '@/hooks/use-notifications';
 import { useEffect } from 'react';
@@ -19,6 +20,7 @@ export const unstable_settings = {
 
 function RootContent() {
   useNotificationLifecycle();
+  useRemoteDiagnostics();
   const { colorScheme } = useAppTheme();
   const { isAuthReady } = useAuth();
 

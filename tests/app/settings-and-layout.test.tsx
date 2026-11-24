@@ -17,6 +17,7 @@ jest.mock('@/context/auth-context', () => ({
 jest.mock('@/context/theme-context', () => ({
   useAppTheme: jest.fn(), ThemeProvider: ({ children }: React.PropsWithChildren) => children,
 }));
+jest.mock('@/hooks/use-remote-diagnostics', () => ({ useRemoteDiagnostics: jest.fn() }));
 jest.mock('@/hooks/use-notifications', () => ({ useNotificationLifecycle: jest.fn() }));
 jest.mock('expo-splash-screen', () => ({
   preventAutoHideAsync: jest.fn().mockResolvedValue(undefined), hideAsync: jest.fn().mockResolvedValue(undefined), setOptions: jest.fn(),

@@ -9,6 +9,7 @@
       "distribution": "internal"
     },
     "preview": {
+      "env": { "EXPO_PUBLIC_DIAGNOSTICS_ENABLED": "true" },
       "distribution": "internal"
     },
     "production": {
