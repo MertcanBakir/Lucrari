@@ -7,13 +7,15 @@ const messages: Record<string, string> = {
   notification_device_conflict: 'Bu cihaz başka bir hesaba kayıtlı. Önce eski hesaptan çıkış yapın.',
   notification_invalid_preferences: 'Bildirim tercihlerini kontrol edip tekrar deneyin.',
 };
-class NotificationOperationError extends Error {}
+class NotificationOperationError extends Error {
+  constructor(message: string, readonly code: string | null) { super(message); }
+}
 export function notificationError(error: unknown): Error {
   if (error instanceof NotificationOperationError) return error;
   const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : '';
   const code = Object.keys(messages).find(key => message.includes(key));
   // Do not propagate raw provider errors: they can contain push tokens.
-  return new NotificationOperationError(code ? messages[code] : 'Bildirim işlemi tamamlanamadı. Bağlantınızı kontrol edip tekrar deneyin.');
+  return new NotificationOperationError(code ? messages[code] : 'Bildirim işlemi tamamlanamadı. Bağlantınızı kontrol edip tekrar deneyin.', code ?? null);
 }
 
 export function parseNotificationPreferences(raw: unknown): NotificationPreferences {

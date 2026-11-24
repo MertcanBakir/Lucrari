@@ -90,6 +90,12 @@ class AppLogger {
   private minLevel: LogLevel = typeof __DEV__ !== 'undefined' && __DEV__ ? 'debug' : 'info';
   private logBuffer: LogEntry[] = [];
   private isSilent = false;
+  private listeners = new Set<(entry: LogEntry) => void>();
+
+  public subscribe(listener: (entry: LogEntry) => void): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
 
   public setMinLevel(level: LogLevel): void { this.minLevel = level; }
   public setSilent(silent: boolean): void { this.isSilent = silent; }
@@ -108,6 +114,7 @@ class AppLogger {
     // Keep diagnostics in memory even when console output is filtered or silenced.
     this.logBuffer.push(entry);
     if (this.logBuffer.length > 100) this.logBuffer.shift();
+    this.listeners.forEach(listener => { try { listener(entry); } catch { /* logging never interrupts callers */ } });
     if (this.isSilent || SEVERITY[level] < SEVERITY[this.minLevel]) return;
 
     const context = JSON.stringify(entry.context);

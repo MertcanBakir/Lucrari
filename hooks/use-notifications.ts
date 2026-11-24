@@ -27,7 +27,7 @@ export function useNotificationDevice() {
     if (!userId) return;
     publish('loading');
     try { publish(await registerNotificationDevice(userId, true, true)); }
-    catch { publish('error'); log.warn('notification.device.registration.failed', { message: 'Notification device registration failed.' }); }
+    catch (error) { publish('error'); log.warn('notification.device.registration.failed', { message: 'Notification device registration failed.', error }); }
   }, [userId]);
   return { status, retry };
 }
@@ -88,9 +88,9 @@ export function useNotificationLifecycle() {
     if (!isAuthReady || !userId || !supportsPush() || transitioning.current) return;
     let active = true;
     publish('loading');
-    registerNotificationDevice(userId, true, false, nativePushToken.current).then(status => { if (active) publish(status); }).catch(() => {
+    registerNotificationDevice(userId, true, false, nativePushToken.current).then(status => { if (active) publish(status); }).catch((error: unknown) => {
       if (active) publish('error');
-      log.warn('notification.device.registration.failed', { message: 'Notification device registration failed.' });
+      log.warn('notification.device.registration.failed', { message: 'Notification device registration failed.', error });
     });
     return () => { active = false; };
   }, [isAuthReady, userId, session, revision]);
